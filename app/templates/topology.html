@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AptumNet - Topologia de Rede</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <style>
+        body { margin: 0; overflow: hidden; }
+        #topo-canvas {
+            width: 100vw;
+            height: 100vh;
+            display: block;
+            background: #0f1117;
+        }
+        .topo-toolbar {
+            position: fixed;
+            top: 16px; left: 16px;
+            display: flex; gap: 8px;
+            z-index: 10;
+        }
+        .topo-info {
+            position: fixed;
+            bottom: 16px; right: 16px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 16px;
+            min-width: 280px;
+            display: none;
+            z-index: 10;
+        }
+    </style>
+</head>
+<body>
+    <div class="topo-toolbar">
+        <a href="/" class="btn btn-primary">&#8592; Dashboard</a>
+        <button class="btn btn-success" onclick="refreshTopology()">&#8635; Atualizar</button>
+    </div>
+
+    <canvas id="topo-canvas"></canvas>
+
+    <div class="topo-info" id="topo-info">
+        <h4 id="topo-info-title"></h4>
+        <div id="topo-info-body"></div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('topo-canvas');
+        const ctx = canvas.getContext('2d');
+        let nodes = [], edges = [];
+        let dragging = null, offsetX = 0, offsetY = 0;
+        let hoveredNode = null;
+
+        function resize() {
+            canvas.width = window.innerWidth * 2;
+            canvas.height = window.innerHeight * 2;
+            ctx.scale(2, 2);
+            draw();
+        }
+
+        window.addEventListener('resize', resize);
+
+        const typeColors = {
+            'server': '#3b82f6', 'workstation': '#10b981', 'router': '#8b5cf6',
+            'switch': '#8b5cf6', 'network_device': '#8b5cf6', 'printer': '#f59e0b',
+            'firewall': '#ef4444', 'unknown': '#6b7280',
+        };
+
+        const typeIcons = {
+            'server': 'SRV', 'workstation': 'WKS', 'router': 'RTR',
+            'switch': 'SW', 'network_device': 'NET', 'printer': 'PRT',
+            'firewall': 'FW', 'unknown': '?',
+        };
+
+        function draw() {
+            const w = window.innerWidth, h = window.innerHeight;
+            ctx.fillStyle = '#0f1117';
+            ctx.fillRect(0, 0, w, h);
+
+            // Grid
+            ctx.strokeStyle = 'rgba(46, 51, 72, 0.2)';
+            ctx.lineWidth = 0.5;
+            for (let x = 0; x < w; x += 30) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); }
+            for (let y = 0; y < h; y += 30) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); }
+
+            const nodeMap = {};
+            nodes.forEach(n => nodeMap[n.id] = n);
+
+            // Edges
+            edges.forEach(e => {
+                const s = nodeMap[e.source], t = nodeMap[e.target];
+                if (!s || !t) return;
+                ctx.beginPath();
+                ctx.moveTo(s.x, s.y); ctx.lineTo(t.x, t.y);
+                ctx.strokeStyle = e.status === 'active' ? 'rgba(6,182,212,0.5)' : 'rgba(239,68,68,0.5)';
+                ctx.lineWidth = 2.5;
+                ctx.stroke();
+
+                // Animated dots on active links
+                if (e.status === 'active') {
+                    const progress = (Date.now() % 3000) / 3000;
+                    const dx = t.x - s.x, dy = t.y - s.y;
+                    const px = s.x + dx * progress, py = s.y + dy * progress;
+                    ctx.beginPath();
+                    ctx.arc(px, py, 3, 0, Math.PI * 2);
+                    ctx.fillStyle = '#06b6d4';
+                    ctx.fill();
+                }
+            });
+
+            // Nodes
+            nodes.forEach(node => {
+                const color = typeColors[node.type] || typeColors.unknown;
+                const r = hoveredNode === node ? 34 : 30;
+                const isDown = node.status === 'down';
+
+                if (node.alerts > 0) {
+                    ctx.beginPath();
+                    ctx.arc(node.x, node.y, r + 10, 0, Math.PI * 2);
+                    ctx.fillStyle = 'rgba(239,68,68,0.12)';
+                    ctx.fill();
+                }
+
+                ctx.beginPath();
+                ctx.arc(node.x, node.y, r, 0, Math.PI * 2);
+                ctx.fillStyle = isDown ? 'rgba(239,68,68,0.25)' : `${color}30`;
+                ctx.fill();
+                ctx.strokeStyle = isDown ? '#ef4444' : color;
+                ctx.lineWidth = hoveredNode === node ? 3 : 2;
+                ctx.stroke();
+
+                ctx.fillStyle = isDown ? '#ef4444' : color;
+                ctx.font = 'bold 12px Segoe UI';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(typeIcons[node.type] || '?', node.x, node.y - 4);
+
+                // Status dot
+                ctx.beginPath();
+                ctx.arc(node.x + r * 0.65, node.y - r * 0.65, 6, 0, Math.PI * 2);
+                ctx.fillStyle = node.status === 'up' ? '#10b981' : (node.status === 'down' ? '#ef4444' : '#6b7280');
+                ctx.fill();
+                ctx.strokeStyle = '#0f1117';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                ctx.fillStyle = '#e4e6f0';
+                ctx.font = '12px Segoe UI';
+                ctx.textBaseline = 'top';
+                ctx.fillText(node.hostname || node.ip, node.x, node.y + r + 6);
+                ctx.fillStyle = '#8b8fa3';
+                ctx.font = '10px Segoe UI';
+                ctx.fillText(node.ip, node.x, node.y + r + 22);
+
+                if (node.open_ports > 0) {
+                    ctx.fillStyle = '#06b6d4';
+                    ctx.font = '9px Segoe UI';
+                    ctx.fillText(node.open_ports + ' ports', node.x, node.y + 7);
+                }
+            });
+
+            // Title
+            ctx.fillStyle = '#e4e6f0';
+            ctx.font = 'bold 16px Segoe UI';
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'top';
+            ctx.fillText('AptumNet - Topologia de Rede', 16, h - 40);
+            ctx.fillStyle = '#8b8fa3';
+            ctx.font = '12px Segoe UI';
+            ctx.fillText(nodes.length + ' hosts | ' + edges.length + ' links', 16, h - 20);
+        }
+
+        function getNodeAt(mx, my) {
+            for (const n of nodes) {
+                const dx = mx - n.x, dy = my - n.y;
+                if (Math.sqrt(dx * dx + dy * dy) < 30) return n;
+            }
+            return null;
+        }
+
+        canvas.addEventListener('mousedown', e => {
+            const mx = e.clientX, my = e.clientY;
+            dragging = getNodeAt(mx, my);
+            if (dragging) { offsetX = mx - dragging.x; offsetY = my - dragging.y; }
+        });
+
+        canvas.addEventListener('mousemove', e => {
+            const mx = e.clientX, my = e.clientY;
+            if (dragging) {
+                dragging.x = mx - offsetX;
+                dragging.y = my - offsetY;
+                draw();
+            } else {
+                const prev = hoveredNode;
+                hoveredNode = getNodeAt(mx, my);
+                if (hoveredNode !== prev) {
+                    draw();
+                    const info = document.getElementById('topo-info');
+                    if (hoveredNode) {
+                        info.style.display = 'block';
+                        document.getElementById('topo-info-title').textContent =
+                            hoveredNode.hostname || hoveredNode.ip;
+                        document.getElementById('topo-info-body').innerHTML = `
+                            <p>IP: <strong>${hoveredNode.ip}</strong></p>
+                            <p>Tipo: ${hoveredNode.type}</p>
+                            <p>Status: <span class="badge badge-${hoveredNode.status}">${hoveredNode.status}</span></p>
+                            <p>Portas abertas: ${hoveredNode.open_ports}</p>
+                            <p>Alertas: ${hoveredNode.alerts}</p>
+                            <p>SNMP: ${hoveredNode.snmp ? 'Sim' : 'Nao'} | Agente: ${hoveredNode.agent ? 'Sim' : 'Nao'}</p>
+                        `;
+                    } else {
+                        info.style.display = 'none';
+                    }
+                }
+            }
+            canvas.style.cursor = getNodeAt(mx, my) ? 'grab' : 'default';
+        });
+
+        canvas.addEventListener('mouseup', () => {
+            if (dragging) {
+                // Save position
+                fetch('/api/hosts/' + dragging.id, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ topology_x: dragging.x, topology_y: dragging.y })
+                });
+            }
+            dragging = null;
+        });
+
+        async function refreshTopology() {
+            try {
+                const resp = await fetch('/api/topology');
+                const data = await resp.json();
+                nodes = data.nodes;
+                edges = data.edges;
+
+                const w = window.innerWidth, h = window.innerHeight;
+                const cx = w / 2, cy = h / 2;
+                const r = Math.min(w, h) * 0.35;
+
+                nodes.forEach((n, i) => {
+                    if (n.x === null || n.y === null) {
+                        const angle = (2 * Math.PI * i) / nodes.length - Math.PI / 2;
+                        n.x = cx + r * Math.cos(angle);
+                        n.y = cy + r * Math.sin(angle);
+                    }
+                });
+
+                draw();
+            } catch(e) {
+                console.error(e);
+            }
+        }
+
+        // Animate
+        function animate() {
+            if (edges.some(e => e.status === 'active')) draw();
+            requestAnimationFrame(animate);
+        }
+
+        resize();
+        refreshTopology();
+        animate();
+    </script>
+</body>
+</html>

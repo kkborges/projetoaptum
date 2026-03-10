@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AptumNet - Network Monitoring & Security</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <!-- Sidebar -->
+    <nav class="sidebar">
+        <div class="sidebar-logo">
+            <h1>AptumNet</h1>
+            <small>Network Monitor & Security</small>
+        </div>
+
+        <div class="nav-section">
+            <div class="nav-section-title">Overview</div>
+            <a class="nav-item active" onclick="showPage('dashboard')">
+                <span class="nav-icon">&#9673;</span><span>Dashboard</span>
+            </a>
+            <a class="nav-item" onclick="showPage('topology')">
+                <span class="nav-icon">&#9741;</span><span>Topologia</span>
+            </a>
+        </div>
+
+        <div class="nav-section">
+            <div class="nav-section-title">Monitoramento</div>
+            <a class="nav-item" onclick="showPage('hosts')">
+                <span class="nav-icon">&#9634;</span><span>Hosts</span>
+            </a>
+            <a class="nav-item" onclick="showPage('scanner')">
+                <span class="nav-icon">&#8982;</span><span>Scanner</span>
+            </a>
+            <a class="nav-item" onclick="showPage('services')">
+                <span class="nav-icon">&#9881;</span><span>Servi&ccedil;os</span>
+            </a>
+        </div>
+
+        <div class="nav-section">
+            <div class="nav-section-title">Seguran&ccedil;a</div>
+            <a class="nav-item" onclick="showPage('alerts')">
+                <span class="nav-icon">&#9888;</span><span>Alertas</span>
+            </a>
+            <a class="nav-item" onclick="showPage('ids')">
+                <span class="nav-icon">&#9737;</span><span>IDS</span>
+            </a>
+            <a class="nav-item" onclick="showPage('pentest')">
+                <span class="nav-icon">&#9760;</span><span>Pentest</span>
+            </a>
+            <a class="nav-item" onclick="showPage('logs')">
+                <span class="nav-icon">&#9776;</span><span>Logs</span>
+            </a>
+            <a class="nav-item" onclick="showPage('anomalies')">
+                <span class="nav-icon">&#9733;</span><span>Anomalias</span>
+            </a>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="main-content">
+
+        <!-- DASHBOARD PAGE -->
+        <div id="page-dashboard" class="page active">
+            <div class="page-header">
+                <div>
+                    <h2 class="page-title">Dashboard</h2>
+                    <p class="page-subtitle">Vis&atilde;o geral do monitoramento de rede e seguran&ccedil;a</p>
+                </div>
+                <button class="btn btn-primary" onclick="refreshDashboard()">&#8635; Atualizar</button>
+            </div>
+
+            <div class="stats-grid" id="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-label">Hosts Ativos</div>
+                    <div class="stat-value green" id="stat-hosts-up">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Hosts Inativos</div>
+                    <div class="stat-value red" id="stat-hosts-down">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Total de Hosts</div>
+                    <div class="stat-value cyan" id="stat-hosts-total">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Alertas Abertos</div>
+                    <div class="stat-value yellow" id="stat-alerts-open">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Alertas Cr&iacute;ticos</div>
+                    <div class="stat-value red" id="stat-alerts-critical">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Anomalias (24h)</div>
+                    <div class="stat-value purple" id="stat-anomalies">-</div>
+                </div>
+            </div>
+
+            <div class="panel-grid">
+                <div class="panel">
+                    <div class="panel-header">
+                        <span class="panel-title">&#9888; Alertas Recentes</span>
+                        <button class="btn btn-sm btn-primary" onclick="showPage('alerts')">Ver todos</button>
+                    </div>
+                    <div class="panel-body">
+                        <table class="data-table" id="recent-alerts-table">
+                            <thead>
+                                <tr>
+                                    <th>Severidade</th>
+                                    <th>T&iacute;tulo</th>
+                                    <th>Host</th>
+                                    <th>Origem</th>
+                                    <th>Data</th>
+                                </tr>
+                            </thead>
+                            <tbody id="recent-alerts-body"></tbody>
+                        </table>
+                        <div class="empty-state" id="no-alerts" style="display:none">
+                            <div class="empty-state-icon">&#10004;</div>
+                            <p>Nenhum alerta recente</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <div class="panel-header">
+                        <span class="panel-title">&#9737; IDS - Detec&ccedil;&otilde;es</span>
+                    </div>
+                    <div class="panel-body">
+                        <div id="ids-stats">
+                            <div class="severity-bar" id="ids-severity-bar"></div>
+                        </div>
+                        <table class="data-table" id="ids-alerts-table" style="margin-top:12px">
+                            <thead>
+                                <tr><th>Regra</th><th>Severidade</th><th>IP Origem</th><th>Data</th></tr>
+                            </thead>
+                            <tbody id="ids-alerts-body"></tbody>
+                        </table>
+                        <div class="empty-state" id="no-ids" style="display:none">
+                            <div class="empty-state-icon">&#9737;</div>
+                            <p>Nenhuma detec&ccedil;&atilde;o do IDS</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- HOSTS PAGE -->
+        <div id="page-hosts" class="page" style="display:none">
+            <div class="page-header">
+                <div>
+                    <h2 class="page-title">Hosts Monitorados</h2>
+                    <p class="page-subtitle">Todos os dispositivos descobertos na rede</p>
+                </div>
+                <button class="btn btn-primary" onclick="loadHosts()">&#8635; Atualizar</button>
+            </div>
+            <div class="panel">
+                <div class="panel-body">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>IP</th><th>Hostname</th><th>Tipo</th><th>Status</th>
+                                <th>Portas</th><th>SNMP</th><th>Agente</th><th>&Uacute;ltima vez</th>
+                            </tr>
+                        </thead>
+                        <tbody id="hosts-table-body"></tbody>
+                    </table>
+                    <div class="empty-state" id="no-hosts" style="display:none">
+                        <div class="empty-state-icon">&#9634;</div>
+                        <p>Nenhum host encontrado. Execute um scan para descobrir dispositivos.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- SCANNER PAGE -->
+        <div id="page-scanner" class="page" style="display:none">
+            <div class="page-header">
+                <div>
+                    <h2 class="page-title">Scanner de Rede</h2>
+                    <p class="page-subtitle">Descoberta de hosts e scan de portas</p>
+                </div>
+            </div>
+            <div class="panel-grid">
+                <div class="panel">
+                    <div class="panel-header">
+                        <span class="panel-title">Novo Scan</span>
+                    </div>
+                    <div class="panel-body">
+                        <div class="form-group">
+                            <label class="form-label">Alvo (IP ou CIDR)</label>
+                            <input type="text" class="form-input" id="scan-target" placeholder="192.168.1.0/24">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Tipo de Scan</label>
+                            <select class="form-select" id="scan-type">
+                                <option value="discovery">Descoberta de Hosts</option>
+                                <option value="port_scan">Scan de Portas</option>
+                                <option value="full">Scan Completo (hosts + portas)</option>
+                                <option value="pentest">Pentest</option>
+                            </select>
+                        </div>
+                        <button class="btn btn-primary" onclick="startScan()">Iniciar Scan</button>
+                    </div>
+                </div>
+                <div class="panel">
+                    <div class="panel-header">
+                        <span class="panel-title">Scans Recentes</span>
+                    </div>
+                    <div class="panel-body">
+                        <table class="data-table">
+                            <thead>
+                                <tr><th>ID</th><th>Tipo</th><th>Alvo</th><th>Status</th><th>Data</th></tr>
+                            </thead>
+                            <tbody id="scans-table-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            <div class="panel" id="scan-results-panel" style="display:none; margin-top:20px">
+                <div class="panel-header">
+                    <span class="panel-title">Resultados do Scan</span>
+                </div>
+                <div class="panel-body">
+                    <pre id="scan-results" class="log-viewer"></pre>
+                </div>
+            </div>
+        </div>
+
+        <!-- SERVICES PAGE -->
+        <div id="page-services" class="page" style="display:none">
+            <div class="page-header">
+                <div>
+                    <h2 class="page-title">Servi&ccedil;os</h2>
+                    <p class="page-subtitle">Servi&ccedil;os e portas detectadas nos hosts</p>
+                </div>
+            </div>
+            <div class="panel">
+                <div class="panel-body">
+                    <table class="data-table">
+                        <thead>
+                            <tr><th>Host</th><th>Porta</th><th>Protocolo</th><th>Servi&ccedil;o</th><th>Estado</th><th>Banner</th></tr>
+                        </thead>
+                        <tbody id="services-table-body"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- ALERTS PAGE -->
+        <div id="page-alerts" class="page" style="display:none">
+            <div class="page-header">
+                <div>
+                    <h2 class="page-title">Alertas</h2>
+                    <p class="page-subtitle">Todos os alertas de seguran&ccedil;a e performance</p>
+                </div>
+                <div>
+                    <select class="form-select" id="alert-severity-filter" onchange="loadAlerts()" style="width:auto;display:inline-block">
+                        <option value="">Todas severidades</option>
+                        <option value="critical">Cr&iacute;tico</option>
+                        <option value="high">Alto</option>
+                        <option value="medium">M&eacute;dio</option>
+                        <option value="low">Baixo</option>
+                    </select>
+                </div>
+            </div>
+            <div class="panel">
+                <div class="panel-body">
+                    <table class="data-table">
+                        <thead>
+                            <tr><th>Severidade</th><th>T&iacute;tulo</th><th>Tipo</th><th>Host</th><th>Origem</th><th>Status</th><th>Data</th><th>A&ccedil;&atilde;o</th></tr>
+                        </thead>
+                        <tbody id="alerts-table-body"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- IDS PAGE -->
+        <div id="page-ids" class="page" style="display:none">
+            <div class="page-header">
+                <div>
+                    <h2 class="page-title">IDS - Sistema de Detec&ccedil;&atilde;o de Intrus&atilde;o</h2>
+                    <p class="page-subtitle">Detec&ccedil;&otilde;es baseadas em regras</p>
+                </div>
+            </div>
+            <div class="stats-grid" id="ids-stats-grid"></div>
+            <div class="panel">
+                <div class="panel-header">
+                    <span class="panel-title">Detec&ccedil;&otilde;es do IDS</span>
+                </div>
+                <div class="panel-body">
+                    <table class="data-table">
+                        <thead>
+                            <tr><th>Regra</th><th>Nome</th><th>Severidade</th><th>IP Origem</th><th>Detalhes</th><th>Data</th></tr>
+                        </thead>
+                        <tbody id="ids-full-table-body"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- PENTEST PAGE -->
+        <div id="page-pentest" class="page" style="display:none">
+            <div class="page-header">
+                <div>
+                    <h2 class="page-title">Pentest Scanner</h2>
+                    <p class="page-subtitle">Teste de penetra&ccedil;&atilde;o automatizado</p>
+                </div>
+            </div>
+            <div class="panel">
+                <div class="panel-header">
+                    <span class="panel-title">Novo Pentest</span>
+                </div>
+                <div class="panel-body">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">IP do Alvo</label>
+                            <input type="text" class="form-input" id="pentest-target" placeholder="192.168.1.1">
+                        </div>
+                    </div>
+                    <button class="btn btn-danger" onclick="startPentest()">Iniciar Pentest</button>
+                    <p style="margin-top:8px;font-size:11px;color:var(--text-secondary)">
+                        Aten&ccedil;&atilde;o: Execute apenas em sistemas com autoriza&ccedil;&atilde;o.
+                    </p>
+                </div>
+            </div>
+            <div class="panel" id="pentest-results-panel" style="display:none; margin-top:20px">
+                <div class="panel-header">
+                    <span class="panel-title">Resultados do Pentest</span>
+                </div>
+                <div class="panel-body">
+                    <pre id="pentest-results" class="log-viewer"></pre>
+                </div>
+            </div>
+        </div>
+
+        <!-- LOGS PAGE -->
+        <div id="page-logs" class="page" style="display:none">
+            <div class="page-header">
+                <div>
+                    <h2 class="page-title">An&aacute;lise de Logs</h2>
+                    <p class="page-subtitle">Coleta e an&aacute;lise centralizada de logs</p>
+                </div>
+            </div>
+            <div class="stats-grid" id="log-stats-grid"></div>
+            <div class="panel-grid">
+                <div class="panel">
+                    <div class="panel-header">
+                        <span class="panel-title">Ingest&atilde;o de Logs</span>
+                    </div>
+                    <div class="panel-body">
+                        <div class="form-group">
+                            <label class="form-label">Origem</label>
+                            <input type="text" class="form-input" id="log-source" placeholder="syslog, apache, nginx...">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">IP do Host (opcional)</label>
+                            <input type="text" class="form-input" id="log-host-ip" placeholder="192.168.1.1">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Linhas de Log (uma por linha)</label>
+                            <textarea class="form-input" id="log-lines" rows="6" placeholder="Cole as linhas de log aqui..."></textarea>
+                        </div>
+                        <button class="btn btn-primary" onclick="ingestLogs()">Analisar Logs</button>
+                    </div>
+                </div>
+                <div class="panel">
+                    <div class="panel-header">
+                        <span class="panel-title">Buscar nos Logs</span>
+                    </div>
+                    <div class="panel-body">
+                        <div class="form-group">
+                            <label class="form-label">Pesquisar</label>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <input type="text" class="form-input" id="log-search-query" placeholder="Termo de busca...">
+                                </div>
+                                <div class="form-group" style="flex:0">
+                                    <button class="btn btn-primary" onclick="searchLogs()">Buscar</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="log-viewer" id="log-search-results" style="min-height:100px"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="panel" style="margin-top:20px">
+                <div class="panel-header">
+                    <span class="panel-title">Tentativas de Login Falhadas</span>
+                </div>
+                <div class="panel-body" id="failed-logins-body"></div>
+            </div>
+        </div>
+
+        <!-- ANOMALIES PAGE -->
+        <div id="page-anomalies" class="page" style="display:none">
+            <div class="page-header">
+                <div>
+                    <h2 class="page-title">Detec&ccedil;&atilde;o de Anomalias</h2>
+                    <p class="page-subtitle">Identifica&ccedil;&atilde;o de padr&otilde;es anormais e comportamentos incomuns</p>
+                </div>
+            </div>
+            <div class="stats-grid" id="anomaly-stats-grid"></div>
+            <div class="panel">
+                <div class="panel-body">
+                    <table class="data-table">
+                        <thead>
+                            <tr><th>Severidade</th><th>Host</th><th>M&eacute;trica</th><th>Descri&ccedil;&atilde;o</th><th>Valor</th><th>Data</th></tr>
+                        </thead>
+                        <tbody id="anomalies-table-body"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- TOPOLOGY PAGE (embedded) -->
+        <div id="page-topology" class="page" style="display:none">
+            <div class="page-header">
+                <div>
+                    <h2 class="page-title">Topologia de Rede</h2>
+                    <p class="page-subtitle">Visualiza&ccedil;&atilde;o gr&aacute;fica da arquitetura de rede</p>
+                </div>
+                <button class="btn btn-primary" onclick="loadTopology()">&#8635; Atualizar</button>
+            </div>
+            <div class="panel panel-full">
+                <div class="panel-body" style="padding:0">
+                    <canvas id="topology-canvas" width="1200" height="600"></canvas>
+                </div>
+            </div>
+            <div class="panel" style="margin-top:16px">
+                <div class="panel-header">
+                    <span class="panel-title">Legenda</span>
+                </div>
+                <div class="panel-body" style="display:flex;gap:24px;flex-wrap:wrap">
+                    <div class="severity-item"><span class="severity-dot" style="background:#3b82f6"></span> Servidor</div>
+                    <div class="severity-item"><span class="severity-dot" style="background:#10b981"></span> Workstation</div>
+                    <div class="severity-item"><span class="severity-dot" style="background:#8b5cf6"></span> Roteador/Switch</div>
+                    <div class="severity-item"><span class="severity-dot" style="background:#f59e0b"></span> Impressora</div>
+                    <div class="severity-item"><span class="severity-dot" style="background:#6b7280"></span> Desconhecido</div>
+                    <div class="severity-item"><span class="severity-dot" style="background:#ef4444"></span> Host com Alerta</div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
