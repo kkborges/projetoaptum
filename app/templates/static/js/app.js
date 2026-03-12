@@ -7,6 +7,8 @@ let currentHostId = null;
 let currentSNMPDeviceId = null;
 let metricsCharts = {};
 let snmpCharts = {};
+let logEntriesOffset = 0;
+const LOG_ENTRIES_LIMIT = 50;
 
 // --- Navigation ---
 function showPage(page) {
@@ -749,6 +751,85 @@ async function loadLogSummary() {
         }
         document.getElementById('failed-logins-body').innerHTML = html;
     }
+
+    // Load filter dropdowns and log entries
+    await loadLogFilterOptions();
+    logEntriesOffset = 0;
+    await loadLogEntries();
+}
+
+async function loadLogFilterOptions() {
+    // Load hosts filter
+    const hosts = await apiGet('/logs/hosts');
+    const hostSelect = document.getElementById('log-filter-host');
+    if (hosts && hostSelect) {
+        const currentVal = hostSelect.value;
+        hostSelect.innerHTML = '<option value="">Todos</option>';
+        hosts.forEach(h => {
+            hostSelect.innerHTML += `<option value="${h.id}">${h.ip_address}${h.hostname ? ' (' + h.hostname + ')' : ''}</option>`;
+        });
+        hostSelect.value = currentVal;
+    }
+
+    // Load sources filter
+    const sources = await apiGet('/logs/sources');
+    const sourceSelect = document.getElementById('log-filter-source');
+    if (sources && sourceSelect) {
+        const currentVal = sourceSelect.value;
+        sourceSelect.innerHTML = '<option value="">Todas</option>';
+        sources.forEach(s => {
+            sourceSelect.innerHTML += `<option value="${s}">${s}</option>`;
+        });
+        sourceSelect.value = currentVal;
+    }
+}
+
+async function loadLogEntries() {
+    const hostId = document.getElementById('log-filter-host').value;
+    const level = document.getElementById('log-filter-level').value;
+    const source = document.getElementById('log-filter-source').value;
+
+    let path = `/logs/entries?limit=${LOG_ENTRIES_LIMIT}&offset=${logEntriesOffset}`;
+    if (hostId) path += `&host_id=${hostId}`;
+    if (level) path += `&level=${level}`;
+    if (source) path += `&source=${encodeURIComponent(source)}`;
+
+    const data = await apiGet(path);
+    if (!data) return;
+
+    const tbody = document.getElementById('log-entries-body');
+    const infoEl = document.getElementById('log-entries-info');
+
+    if (data.entries.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-secondary)">Nenhum registro de log encontrado</td></tr>';
+        infoEl.textContent = 'Total: 0';
+    } else {
+        tbody.innerHTML = data.entries.map(e => {
+            const levelClass = e.level === 'critical' ? 'badge-critical' :
+                               e.level === 'error' ? 'badge-high' :
+                               e.level === 'warning' ? 'badge-medium' :
+                               e.level === 'debug' ? 'badge-low' : 'badge-info';
+            return `<tr>
+                <td style="white-space:nowrap">${formatDate(e.timestamp)}</td>
+                <td><span class="badge ${levelClass}">${e.level}</span></td>
+                <td>${e.host_ip || '-'}</td>
+                <td>${e.source || '-'}</td>
+                <td style="max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(e.message || '').replace(/"/g, '&quot;')}">${e.message || '-'}</td>
+            </tr>`;
+        }).join('');
+        const end = Math.min(logEntriesOffset + LOG_ENTRIES_LIMIT, data.total);
+        infoEl.textContent = `Exibindo ${logEntriesOffset + 1}-${end} de ${data.total}`;
+    }
+
+    // Pagination buttons
+    document.getElementById('log-prev-btn').disabled = logEntriesOffset === 0;
+    document.getElementById('log-next-btn').disabled = (logEntriesOffset + LOG_ENTRIES_LIMIT) >= data.total;
+}
+
+function logEntriesPage(direction) {
+    logEntriesOffset += direction * LOG_ENTRIES_LIMIT;
+    if (logEntriesOffset < 0) logEntriesOffset = 0;
+    loadLogEntries();
 }
 
 async function ingestLogs() {

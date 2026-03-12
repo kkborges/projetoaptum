@@ -12,25 +12,57 @@ from app.core.config import SCAN_TIMEOUT, SCAN_THREADS
 
 def _tcp_connect_scan(ip: str, port: int, timeout: float) -> dict:
     """Attempt TCP connection to determine port state."""
+    sock = None
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(timeout)
-        result = sock.connect_ex((ip, port))
-        if result == 0:
-            banner = ""
+
+        # Use connect() instead of connect_ex() for reliable timeout handling
+        try:
+            sock.connect((ip, port))
+        except socket.timeout:
+            return {"port": port, "state": "filtered", "banner": ""}
+        except ConnectionRefusedError:
+            return {"port": port, "state": "closed", "banner": ""}
+        except OSError as e:
+            # ENETUNREACH, EHOSTUNREACH, etc.
+            if e.errno in (111, 113, 101):  # ECONNREFUSED, EHOSTUNREACH, ENETUNREACH
+                return {"port": port, "state": "closed", "banner": ""}
+            return {"port": port, "state": "filtered", "banner": ""}
+
+        # Port is open — try to grab banner
+        banner = ""
+        try:
+            # For non-HTTP services, just try receiving first
+            sock.settimeout(2)
+            sock.send(b"\r\n")
+            banner = sock.recv(1024).decode("utf-8", errors="ignore").strip()
+        except Exception:
+            pass
+
+        if not banner:
             try:
-                sock.send(b"HEAD / HTTP/1.0\r\n\r\n")
-                banner = sock.recv(1024).decode("utf-8", errors="ignore").strip()
+                sock2 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock2.settimeout(3)
+                sock2.connect((ip, port))
+                sock2.send(b"HEAD / HTTP/1.0\r\n\r\n")
+                banner = sock2.recv(1024).decode("utf-8", errors="ignore").strip()
+                sock2.close()
             except Exception:
                 pass
-            sock.close()
-            return {"port": port, "state": "open", "banner": banner}
-        sock.close()
-        return {"port": port, "state": "closed", "banner": ""}
+
+        return {"port": port, "state": "open", "banner": banner}
+
     except socket.timeout:
         return {"port": port, "state": "filtered", "banner": ""}
     except Exception:
         return {"port": port, "state": "closed", "banner": ""}
+    finally:
+        if sock:
+            try:
+                sock.close()
+            except Exception:
+                pass
 
 
 COMMON_PORTS = [
@@ -81,13 +113,13 @@ async def ping_host(ip: str, timeout: float = 2.0) -> bool:
                 return True
         except (asyncio.TimeoutError, Exception):
             continue
-    # Try ICMP-like via raw socket fallback
+    # Try fallback — connect to echo port
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(timeout)
-        sock.connect_ex((ip, 7))
+        result = sock.connect_ex((ip, 7))
         sock.close()
-        return True
+        return result == 0
     except Exception:
         return False
 
@@ -111,13 +143,22 @@ async def discover_hosts(network: str, progress_callback=None) -> list[dict]:
         if is_up:
             hostname = None
             try:
-                hostname = await loop.run_in_executor(
-                    None, lambda: socket.getfqdn(ip_str)
+                # Try reverse DNS first (more reliable for internal hosts)
+                result = await loop.run_in_executor(
+                    None, lambda: socket.gethostbyaddr(ip_str)
                 )
-                if hostname == ip_str:
-                    hostname = None
-            except Exception:
+                hostname = result[0] if result[0] != ip_str else None
+            except (socket.herror, socket.gaierror, OSError):
                 pass
+            if not hostname:
+                try:
+                    hostname = await loop.run_in_executor(
+                        None, lambda: socket.getfqdn(ip_str)
+                    )
+                    if hostname == ip_str:
+                        hostname = None
+                except Exception:
+                    pass
             return {
                 "ip_address": ip_str,
                 "hostname": hostname,

@@ -21,6 +21,20 @@ from app.monitoring.anomaly_detector import AnomalyDetector
 
 router = APIRouter(prefix="/api")
 
+
+# --- DNS Reverse Lookup ---
+def _resolve_hostname(ip: str) -> str | None:
+    """Resolve hostname from IP via reverse DNS / nslookup."""
+    import socket as _socket
+    try:
+        hostname, _, _ = _socket.gethostbyaddr(ip)
+        if hostname and hostname != ip:
+            return hostname
+    except (_socket.herror, _socket.gaierror, OSError):
+        pass
+    return None
+
+
 # Singleton engines
 ids_engine = IDSEngine()
 log_analyzer = LogAnalyzer()
@@ -185,6 +199,36 @@ def update_host(host_id: int, data: HostUpdate, db: Session = Depends(get_db)):
     return {"status": "updated"}
 
 
+@router.post("/hosts/{host_id}/resolve-dns")
+def resolve_host_dns(host_id: int, db: Session = Depends(get_db)):
+    """Resolve hostname via reverse DNS for a host."""
+    host = db.query(Host).filter(Host.id == host_id).first()
+    if not host:
+        raise HTTPException(status_code=404, detail="Host not found")
+    hostname = _resolve_hostname(host.ip_address)
+    if hostname:
+        host.hostname = hostname
+        db.commit()
+        return {"status": "resolved", "hostname": hostname}
+    return {"status": "not_found", "hostname": None}
+
+
+@router.post("/hosts/resolve-all-dns")
+def resolve_all_dns(db: Session = Depends(get_db)):
+    """Resolve hostnames for all hosts that don't have one set."""
+    hosts = db.query(Host).filter(
+        (Host.hostname.is_(None)) | (Host.hostname == "")
+    ).all()
+    resolved = 0
+    for host in hosts:
+        hostname = _resolve_hostname(host.ip_address)
+        if hostname:
+            host.hostname = hostname
+            resolved += 1
+    db.commit()
+    return {"status": "completed", "total_checked": len(hosts), "resolved": resolved}
+
+
 # --- Scanning ---
 
 @router.post("/scan")
@@ -347,87 +391,153 @@ def list_scans(db: Session = Depends(get_db)):
 @router.post("/agent/report")
 def agent_report(report: AgentReport, db: Session = Depends(get_db)):
     """Receive metrics from monitoring agent."""
+    import logging
+    import math
+    _logger = logging.getLogger(__name__)
+
     sys_info = report.system_info
     ip = sys_info.get("ip_address", "unknown")
 
-    host = db.query(Host).filter(Host.ip_address == ip).first()
-    if not host:
-        host = Host(
-            ip_address=ip,
-            hostname=sys_info.get("hostname"),
-            os_detected=sys_info.get("os"),
-            status="up",
-            agent_installed=True,
-        )
-        db.add(host)
-        db.flush()
-    else:
-        host.status = "up"
-        host.last_seen = datetime.utcnow()
-        host.agent_installed = True
-        if sys_info.get("hostname"):
-            host.hostname = sys_info["hostname"]
-        if sys_info.get("os"):
-            host.os_detected = sys_info["os"]
+    # Resolve hostname via reverse DNS if not provided
+    hostname = sys_info.get("hostname")
+    if not hostname or hostname == ip:
+        hostname = _resolve_hostname(ip)
 
-    metrics = report.metrics
-    now = datetime.utcnow()
+    try:
+        host = db.query(Host).filter(Host.ip_address == ip).first()
+        if not host:
+            host = Host(
+                ip_address=ip,
+                hostname=hostname,
+                os_detected=sys_info.get("os"),
+                status="up",
+                agent_installed=True,
+            )
+            db.add(host)
+            db.flush()
+        else:
+            host.status = "up"
+            host.last_seen = datetime.utcnow()
+            host.agent_installed = True
+            if hostname:
+                host.hostname = hostname
+            if sys_info.get("os"):
+                host.os_detected = sys_info["os"]
 
-    # CPU
-    cpu = metrics.get("cpu", {})
-    if cpu.get("percent") is not None:
-        db.add(HostMetric(
-            host_id=host.id, metric_type="cpu",
-            metric_value=cpu["percent"], metric_unit="%",
-            details=cpu, collected_at=now, source="agent"
-        ))
-        anomaly = anomaly_detector.record_metric(ip, "cpu_percent", cpu["percent"])
-        if anomaly:
-            db.add(Alert(
-                host_id=host.id, alert_type="performance",
-                severity=anomaly["severity"], title="CPU Anomaly Detected",
-                description=anomaly["description"], source="anomaly",
-            ))
+        metrics = report.metrics
+        now = datetime.utcnow()
 
-    # Memory
-    mem = metrics.get("memory", {})
-    if mem.get("percent") is not None:
-        db.add(HostMetric(
-            host_id=host.id, metric_type="memory",
-            metric_value=mem["percent"], metric_unit="%",
-            details=mem, collected_at=now, source="agent"
-        ))
-        anomaly = anomaly_detector.record_metric(ip, "memory_percent", mem["percent"])
-        if anomaly:
-            db.add(Alert(
-                host_id=host.id, alert_type="performance",
-                severity=anomaly["severity"], title="Memory Anomaly Detected",
-                description=anomaly["description"], source="anomaly",
-            ))
+        def _safe_float(val):
+            """Ensure value is a finite float for DB storage."""
+            if val is None:
+                return None
+            try:
+                f = float(val)
+                return f if math.isfinite(f) else None
+            except (TypeError, ValueError):
+                return None
 
-    # Disk
-    for disk in metrics.get("disks", []):
-        if disk.get("usage_percent") is not None:
+        # CPU
+        cpu = metrics.get("cpu", {})
+        cpu_val = _safe_float(cpu.get("percent"))
+        if cpu_val is not None:
             db.add(HostMetric(
-                host_id=host.id, metric_type="disk",
-                metric_value=disk["usage_percent"], metric_unit="%",
-                details=disk, collected_at=now, source="agent"
+                host_id=host.id, metric_type="cpu",
+                metric_value=cpu_val, metric_unit="%",
+                details=cpu, collected_at=now, source="agent"
+            ))
+            anomaly = anomaly_detector.record_metric(ip, "cpu_percent", cpu_val)
+            if anomaly:
+                db.add(Alert(
+                    host_id=host.id, alert_type="performance",
+                    severity=anomaly["severity"], title="CPU Anomaly Detected",
+                    description=anomaly["description"], source="anomaly",
+                ))
+
+        # Memory
+        mem = metrics.get("memory", {})
+        mem_val = _safe_float(mem.get("percent"))
+        if mem_val is not None:
+            db.add(HostMetric(
+                host_id=host.id, metric_type="memory",
+                metric_value=mem_val, metric_unit="%",
+                details=mem, collected_at=now, source="agent"
+            ))
+            anomaly = anomaly_detector.record_metric(ip, "memory_percent", mem_val)
+            if anomaly:
+                db.add(Alert(
+                    host_id=host.id, alert_type="performance",
+                    severity=anomaly["severity"], title="Memory Anomaly Detected",
+                    description=anomaly["description"], source="anomaly",
+                ))
+
+        # Disk
+        for disk in metrics.get("disks", []):
+            disk_val = _safe_float(disk.get("usage_percent"))
+            if disk_val is not None:
+                db.add(HostMetric(
+                    host_id=host.id, metric_type="disk",
+                    metric_value=disk_val, metric_unit="%",
+                    details=disk, collected_at=now, source="agent"
+                ))
+
+        # Network (bytes_recv as a metric for charting)
+        net = metrics.get("network", {})
+        net_bytes = _safe_float(net.get("bytes_recv"))
+        if net_bytes is not None:
+            db.add(HostMetric(
+                host_id=host.id, metric_type="network",
+                metric_value=net_bytes, metric_unit="bytes",
+                details={"bytes_sent": net.get("bytes_sent"),
+                         "bytes_recv": net.get("bytes_recv"),
+                         "errors_in": net.get("errors_in"),
+                         "errors_out": net.get("errors_out")},
+                collected_at=now, source="agent"
             ))
 
-    # Threshold checks
-    threshold_alerts = anomaly_detector.check_thresholds(ip, {
-        "cpu_percent": cpu.get("percent", 0),
-        "memory_percent": mem.get("percent", 0),
-    })
-    for ta in threshold_alerts:
-        db.add(Alert(
-            host_id=host.id, alert_type="performance",
-            severity=ta["severity"], title=ta["description"],
-            description=ta["description"], source="anomaly",
-        ))
+        # Services (if agent reports them)
+        services = metrics.get("services", [])
+        if services:
+            for svc in services:
+                svc_port = svc.get("port")
+                if svc_port:
+                    existing_port = db.query(Port).filter(
+                        Port.host_id == host.id,
+                        Port.port_number == svc_port
+                    ).first()
+                    if existing_port:
+                        existing_port.state = "open"
+                        existing_port.service_name = svc.get("name", existing_port.service_name)
+                        existing_port.last_scanned = now
+                    else:
+                        db.add(Port(
+                            host_id=host.id,
+                            port_number=svc_port,
+                            protocol=svc.get("protocol", "tcp"),
+                            state="open",
+                            service_name=svc.get("name"),
+                            last_scanned=now,
+                        ))
 
-    db.commit()
-    return {"status": "ok", "host_id": host.id}
+        # Threshold checks
+        threshold_alerts = anomaly_detector.check_thresholds(ip, {
+            "cpu_percent": cpu_val or 0,
+            "memory_percent": mem_val or 0,
+        })
+        for ta in threshold_alerts:
+            db.add(Alert(
+                host_id=host.id, alert_type="performance",
+                severity=ta["severity"], title=ta["description"],
+                description=ta["description"], source="anomaly",
+            ))
+
+        db.commit()
+        return {"status": "ok", "host_id": host.id}
+
+    except Exception as e:
+        db.rollback()
+        _logger.error(f"Agent report failed for {ip}: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal error processing report: {str(e)}")
 
 
 # --- SNMP ---
@@ -712,13 +822,27 @@ def ingest_logs(data: LogIngest, db: Session = Depends(get_db)):
             details=threat,
         ))
 
-    # Save log entries
+    # Save log entries with auto-detected level
+    import re as _re
+
+    def _detect_level(text: str) -> str:
+        t = text.lower()
+        if _re.search(r'\b(critical|crit|emerg|emergency|fatal)\b', t):
+            return "critical"
+        if _re.search(r'\b(error|err|fail|failed|failure)\b', t):
+            return "error"
+        if _re.search(r'\b(warn|warning)\b', t):
+            return "warning"
+        if _re.search(r'\b(debug|trace)\b', t):
+            return "debug"
+        return "info"
+
     for line in data.lines[:1000]:
         if line.strip():
             db.add(LogEntry(
                 host_id=host.id if host else None,
                 source=data.source,
-                level="info",
+                level=_detect_level(line),
                 message=line[:1000],
                 raw_log=line,
             ))
@@ -743,6 +867,73 @@ def search_logs(q: str, limit: int = 100):
 def get_failed_logins():
     """Get failed login analysis."""
     return log_analyzer.get_failed_logins()
+
+
+@router.get("/logs/entries")
+def list_log_entries(
+    host_id: Optional[int] = None,
+    source: Optional[str] = None,
+    level: Optional[str] = None,
+    limit: int = 200,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+):
+    """List stored log entries with filters for host, source, and level."""
+    query = db.query(LogEntry)
+    if host_id:
+        query = query.filter(LogEntry.host_id == host_id)
+    if source:
+        query = query.filter(LogEntry.source == source)
+    if level:
+        query = query.filter(LogEntry.level == level)
+
+    total = query.count()
+    entries = query.order_by(LogEntry.timestamp.desc()).offset(offset).limit(limit).all()
+
+    return {
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "entries": [
+            {
+                "id": e.id,
+                "host_id": e.host_id,
+                "host_ip": (
+                    db.query(Host.ip_address).filter(Host.id == e.host_id).scalar()
+                    if e.host_id else None
+                ),
+                "source": e.source,
+                "level": e.level,
+                "message": e.message,
+                "raw_log": (e.raw_log or "")[:500],
+                "timestamp": e.timestamp.isoformat() if e.timestamp else None,
+            }
+            for e in entries
+        ],
+    }
+
+
+@router.get("/logs/sources")
+def list_log_sources(db: Session = Depends(get_db)):
+    """List distinct log sources for filter dropdown."""
+    from sqlalchemy import distinct
+    sources = db.query(distinct(LogEntry.source)).all()
+    return [s[0] for s in sources if s[0]]
+
+
+@router.get("/logs/hosts")
+def list_log_hosts(db: Session = Depends(get_db)):
+    """List hosts that have log entries, for filter dropdown."""
+    from sqlalchemy import distinct
+    host_ids = db.query(distinct(LogEntry.host_id)).filter(
+        LogEntry.host_id.isnot(None)
+    ).all()
+    hosts = []
+    for (hid,) in host_ids:
+        h = db.query(Host).filter(Host.id == hid).first()
+        if h:
+            hosts.append({"id": h.id, "ip_address": h.ip_address, "hostname": h.hostname})
+    return hosts
 
 
 # --- Anomalies ---

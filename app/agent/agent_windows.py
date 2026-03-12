@@ -1,7 +1,11 @@
 """
-AptumNet Agent - Lightweight monitoring agent to install on hosts.
-Collects system metrics and sends to the central server.
-Run: python -m app.agent.agent_client --server http://server:8000
+AptumNet Windows Agent — Monitoring agent for Windows hosts.
+
+Collects system metrics, running services, and Windows-specific data.
+Sends to the central server via HTTP.
+
+Requirements: pip install psutil httpx wmi pywin32
+Run: python agent_windows.py --server http://server:8000
 """
 import argparse
 import json
@@ -9,8 +13,25 @@ import platform
 import socket
 import time
 import sys
+import os
 
 import psutil
+
+# Optional Windows-specific imports
+WMI_AVAILABLE = False
+try:
+    import wmi
+    WMI_AVAILABLE = True
+except ImportError:
+    pass
+
+WIN32_AVAILABLE = False
+try:
+    import win32service
+    import win32serviceutil
+    WIN32_AVAILABLE = True
+except ImportError:
+    pass
 
 
 def collect_system_info() -> dict:
@@ -18,7 +39,7 @@ def collect_system_info() -> dict:
     uname = platform.uname()
     boot_time = psutil.boot_time()
 
-    return {
+    info = {
         "hostname": socket.gethostname(),
         "ip_address": _get_primary_ip(),
         "os": f"{uname.system} {uname.release}",
@@ -27,7 +48,29 @@ def collect_system_info() -> dict:
         "processor": uname.processor or platform.processor(),
         "boot_time": boot_time,
         "uptime_seconds": time.time() - boot_time,
+        "platform": "windows",
     }
+
+    # WMI extras
+    if WMI_AVAILABLE:
+        try:
+            c = wmi.WMI()
+            for os_info in c.Win32_OperatingSystem():
+                info["os_version_full"] = os_info.Caption
+                info["os_build"] = os_info.BuildNumber
+                info["total_memory_gb"] = round(
+                    int(os_info.TotalVisibleMemorySize) / (1024 * 1024), 2
+                )
+                break
+            for cs in c.Win32_ComputerSystem():
+                info["manufacturer"] = cs.Manufacturer
+                info["model"] = cs.Model
+                info["domain"] = cs.Domain
+                break
+        except Exception:
+            pass
+
+    return info
 
 
 def collect_metrics() -> dict:
@@ -51,7 +94,7 @@ def collect_metrics() -> dict:
                 "free_gb": round(usage.free / (1024 ** 3), 2),
                 "usage_percent": usage.percent,
             })
-        except PermissionError:
+        except (PermissionError, OSError):
             continue
 
     interfaces = []
@@ -78,7 +121,7 @@ def collect_metrics() -> dict:
             iface_info["errors_out"] = nic.errout
         interfaces.append(iface_info)
 
-    # Top processes
+    # Top processes by CPU
     processes = []
     for proc in psutil.process_iter(["pid", "name", "cpu_percent", "memory_percent", "status"]):
         try:
@@ -89,7 +132,7 @@ def collect_metrics() -> dict:
             continue
     processes.sort(key=lambda p: p.get("cpu_percent", 0), reverse=True)
 
-    # Connections for security monitoring
+    # Network connections
     connections = []
     try:
         for conn in psutil.net_connections(kind="inet"):
@@ -122,11 +165,13 @@ def collect_metrics() -> dict:
                         proc = psutil.Process(conn.pid)
                         svc_info["name"] = proc.name()
                         svc_info["cmdline"] = " ".join(proc.cmdline()[:3])
-                        svc_info["username"] = proc.username()
+                        try:
+                            svc_info["username"] = proc.username()
+                        except psutil.AccessDenied:
+                            pass
                     except (psutil.NoSuchProcess, psutil.AccessDenied):
                         pass
                 services.append(svc_info)
-        # Deduplicate by port (keep first occurrence)
         seen_ports = set()
         unique_services = []
         for svc in services:
@@ -136,6 +181,24 @@ def collect_metrics() -> dict:
         services = sorted(unique_services, key=lambda s: s["port"])
     except (psutil.AccessDenied, PermissionError):
         pass
+
+    # Windows services via WMI
+    windows_services = []
+    if WMI_AVAILABLE:
+        try:
+            c = wmi.WMI()
+            for svc in c.Win32_Service():
+                if svc.State == "Running":
+                    windows_services.append({
+                        "name": svc.Name,
+                        "display_name": svc.DisplayName,
+                        "state": svc.State,
+                        "start_mode": svc.StartMode,
+                        "pid": svc.ProcessId,
+                        "path": svc.PathName,
+                    })
+        except Exception:
+            pass
 
     return {
         "timestamp": time.time(),
@@ -163,6 +226,7 @@ def collect_metrics() -> dict:
             "interfaces": interfaces,
         },
         "services": services,
+        "windows_services": windows_services[:50],
         "processes_top10": processes[:10],
         "connections_count": len(connections),
         "connections": connections[:50],
@@ -181,11 +245,60 @@ def _get_primary_ip() -> str:
         return "127.0.0.1"
 
 
+def collect_windows_event_logs(max_entries: int = 50) -> list[dict]:
+    """Collect recent Windows Event Log entries (System + Security)."""
+    entries = []
+    if not WIN32_AVAILABLE:
+        return entries
+
+    try:
+        import win32evtlog
+        import win32evtlogutil
+
+        for log_type in ["System", "Security"]:
+            try:
+                hand = win32evtlog.OpenEventLog(None, log_type)
+                flags = (
+                    win32evtlog.EVENTLOG_BACKWARDS_READ
+                    | win32evtlog.EVENTLOG_SEQUENTIAL_READ
+                )
+                count = 0
+                while count < max_entries:
+                    events = win32evtlog.ReadEventLog(hand, flags, 0)
+                    if not events:
+                        break
+                    for event in events:
+                        if count >= max_entries:
+                            break
+                        entries.append({
+                            "source": event.SourceName,
+                            "event_id": event.EventID & 0xFFFF,
+                            "event_type": event.EventType,
+                            "log_type": log_type,
+                            "time": event.TimeGenerated.Format(),
+                            "message": win32evtlogutil.SafeFormatMessage(
+                                event, log_type
+                            )[:500] if hasattr(win32evtlogutil, 'SafeFormatMessage') else "",
+                        })
+                        count += 1
+                win32evtlog.CloseEventLog(hand)
+            except Exception:
+                continue
+    except ImportError:
+        pass
+
+    return entries
+
+
 def run_agent(server_url: str, interval: int = 30):
-    """Run the agent loop, sending metrics to the server."""
+    """Run the Windows agent loop."""
     import httpx
 
-    print(f"[AptumNet Agent] Starting - Server: {server_url}, Interval: {interval}s")
+    server_url = server_url.rstrip("/")
+    print(f"[AptumNet Windows Agent] Starting - Server: {server_url}, Interval: {interval}s")
+    print(f"[Agent] Platform: {platform.platform()}")
+    print(f"[Agent] WMI available: {WMI_AVAILABLE}")
+    print(f"[Agent] Win32 available: {WIN32_AVAILABLE}")
 
     while True:
         try:
@@ -202,15 +315,38 @@ def run_agent(server_url: str, interval: int = 30):
                 if resp.status_code == 200:
                     print(f"[Agent] Metrics sent successfully")
                 else:
-                    print(f"[Agent] Server responded with {resp.status_code}")
+                    print(f"[Agent] Server responded with {resp.status_code}: {resp.text[:200]}")
+
+            # Optionally send Windows event logs
+            if WIN32_AVAILABLE:
+                try:
+                    events = collect_windows_event_logs(30)
+                    if events:
+                        lines = [
+                            f"[{e['log_type']}] [{e['source']}] EventID={e['event_id']} {e.get('message', '')[:200]}"
+                            for e in events
+                        ]
+                        sys_info = payload["system_info"]
+                        with httpx.Client(timeout=10) as client:
+                            client.post(
+                                f"{server_url}/api/logs/ingest",
+                                json={
+                                    "source": "windows_event",
+                                    "host_ip": sys_info["ip_address"],
+                                    "lines": lines,
+                                },
+                            )
+                except Exception as e:
+                    print(f"[Agent] Event log forwarding error: {e}")
+
         except Exception as e:
-            print(f"[Agent] Error sending metrics: {e}")
+            print(f"[Agent] Error: {e}")
 
         time.sleep(interval)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="AptumNet Monitoring Agent")
+    parser = argparse.ArgumentParser(description="AptumNet Windows Monitoring Agent")
     parser.add_argument("--server", required=True, help="Server URL (e.g., http://server:8000)")
     parser.add_argument("--interval", type=int, default=30, help="Collection interval in seconds")
     args = parser.parse_args()

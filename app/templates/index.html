@@ -403,6 +403,60 @@
                 </div>
                 <div class="panel-body" id="failed-logins-body"></div>
             </div>
+
+            <!-- Log Entries Listing with Filters -->
+            <div class="panel" style="margin-top:20px">
+                <div class="panel-header">
+                    <span class="panel-title">Registros de Logs</span>
+                    <button class="btn btn-sm btn-primary" onclick="loadLogEntries()">&#8635; Atualizar</button>
+                </div>
+                <div class="panel-body">
+                    <div class="form-row" style="margin-bottom:16px;align-items:end">
+                        <div class="form-group">
+                            <label class="form-label">Host / Dispositivo</label>
+                            <select class="form-select" id="log-filter-host" onchange="loadLogEntries()">
+                                <option value="">Todos</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">N&iacute;vel</label>
+                            <select class="form-select" id="log-filter-level" onchange="loadLogEntries()">
+                                <option value="">Todos</option>
+                                <option value="critical">Cr&iacute;tico</option>
+                                <option value="error">Erro</option>
+                                <option value="warning">Warning</option>
+                                <option value="info">Info</option>
+                                <option value="debug">Debug</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Origem</label>
+                            <select class="form-select" id="log-filter-source" onchange="loadLogEntries()">
+                                <option value="">Todas</option>
+                            </select>
+                        </div>
+                    </div>
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Data</th>
+                                <th>N&iacute;vel</th>
+                                <th>Host</th>
+                                <th>Origem</th>
+                                <th>Mensagem</th>
+                            </tr>
+                        </thead>
+                        <tbody id="log-entries-body"></tbody>
+                    </table>
+                    <div style="margin-top:12px;display:flex;justify-content:space-between;align-items:center">
+                        <span style="font-size:12px;color:var(--text-secondary)" id="log-entries-info"></span>
+                        <div style="display:flex;gap:8px">
+                            <button class="btn btn-sm btn-secondary" id="log-prev-btn" onclick="logEntriesPage(-1)" disabled>Anterior</button>
+                            <button class="btn btn-sm btn-secondary" id="log-next-btn" onclick="logEntriesPage(1)">Pr&oacute;ximo</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <!-- ANOMALIES PAGE -->
