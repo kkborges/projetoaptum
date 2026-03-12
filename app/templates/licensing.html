@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AptumNet - Licenciamento</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <style>
+        .license-container { max-width: 960px; margin: 0 auto; padding: 32px 24px; }
+        .license-hero { text-align: center; margin-bottom: 40px; }
+        .license-hero h1 { font-size: 28px; margin-bottom: 8px; color: var(--text-primary); }
+        .license-hero p { color: var(--text-secondary); font-size: 14px; }
+        .license-badge { display: inline-block; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+        .badge-setup { background: #f59e0b22; color: #f59e0b; border: 1px solid #f59e0b44; }
+        .badge-active { background: #10b98122; color: #10b981; border: 1px solid #10b98144; }
+        .badge-expired { background: #ef444422; color: #ef4444; border: 1px solid #ef444444; }
+
+        .license-form-card { background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 12px; padding: 32px; margin-bottom: 24px; }
+        .license-form-card h3 { margin-bottom: 20px; color: var(--text-primary); }
+
+        .key-input-group { display: flex; gap: 12px; }
+        .key-input-group .form-input { flex: 1; font-family: monospace; font-size: 16px; letter-spacing: 1px; text-transform: uppercase; }
+
+        .modules-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; margin: 16px 0; }
+        .module-card { background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 8px; padding: 12px 16px; display: flex; align-items: center; gap: 10px; }
+        .module-card.licensed { border-color: #10b98166; background: #10b98108; }
+        .module-card.unlicensed { opacity: 0.5; }
+        .module-dot { width: 10px; height: 10px; border-radius: 50%; }
+        .module-dot.on { background: #10b981; }
+        .module-dot.off { background: #6b7280; }
+        .module-name { font-size: 13px; font-weight: 500; }
+
+        .quota-bar-container { margin: 16px 0; }
+        .quota-bar { height: 24px; background: var(--bg-primary); border-radius: 12px; overflow: hidden; border: 1px solid var(--border-color); }
+        .quota-fill { height: 100%; border-radius: 12px; transition: width 0.5s ease; background: linear-gradient(90deg, #3b82f6, #8b5cf6); }
+        .quota-fill.warning { background: linear-gradient(90deg, #f59e0b, #ef4444); }
+        .quota-label { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-secondary); margin-top: 6px; }
+
+        .session-list { margin-top: 16px; }
+        .session-item { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 8px; margin-bottom: 8px; font-size: 13px; }
+        .session-active { color: #10b981; }
+        .session-inactive { color: #6b7280; }
+
+        .tier-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 16px; margin: 20px 0; }
+        .tier-card { background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 12px; padding: 20px; text-align: center; cursor: pointer; transition: border-color 0.2s, transform 0.2s; }
+        .tier-card:hover { border-color: #3b82f6; transform: translateY(-2px); }
+        .tier-card.selected { border-color: #3b82f6; box-shadow: 0 0 0 2px #3b82f622; }
+        .tier-card h4 { margin-bottom: 8px; color: var(--text-primary); }
+        .tier-card .tier-detail { font-size: 12px; color: var(--text-secondary); margin: 4px 0; }
+
+        .audit-log { max-height: 300px; overflow-y: auto; }
+        .audit-entry { padding: 8px 12px; border-bottom: 1px solid var(--border-color); font-size: 12px; display: flex; justify-content: space-between; }
+        .audit-action { font-weight: 600; color: var(--text-primary); }
+        .audit-time { color: var(--text-secondary); }
+
+        .alert-box { padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; font-size: 13px; }
+        .alert-box.info { background: #3b82f622; border: 1px solid #3b82f644; color: #60a5fa; }
+        .alert-box.success { background: #10b98122; border: 1px solid #10b98144; color: #34d399; }
+        .alert-box.error { background: #ef444422; border: 1px solid #ef444444; color: #f87171; }
+        .alert-box.warning { background: #f59e0b22; border: 1px solid #f59e0b44; color: #fbbf24; }
+
+        .tab-bar { display: flex; gap: 4px; margin-bottom: 24px; background: var(--bg-secondary); padding: 4px; border-radius: 10px; border: 1px solid var(--border-color); }
+        .tab-btn { flex: 1; padding: 10px 16px; border: none; background: transparent; color: var(--text-secondary); font-size: 13px; font-weight: 500; cursor: pointer; border-radius: 8px; transition: all 0.2s; }
+        .tab-btn.active { background: var(--bg-primary); color: var(--text-primary); box-shadow: 0 1px 3px rgba(0,0,0,0.2); }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
+        .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .info-item { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border-color); font-size: 13px; }
+        .info-label { color: var(--text-secondary); }
+        .info-value { color: var(--text-primary); font-weight: 500; }
+    </style>
+</head>
+<body>
+    <!-- Sidebar -->
+    <nav class="sidebar">
+        <div class="sidebar-logo">
+            <h1>AptumNet</h1>
+            <small>Network Monitor & Security</small>
+        </div>
+        <div class="nav-section">
+            <div class="nav-section-title">Sistema</div>
+            <a class="nav-item active" href="/licensing">
+                <span class="nav-icon">&#9919;</span><span>Licenciamento</span>
+            </a>
+            <a class="nav-item" href="/">
+                <span class="nav-icon">&#9673;</span><span>Dashboard</span>
+            </a>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="main-content">
+        <div class="license-container">
+            <div class="license-hero">
+                <h1>AptumNet - Licenciamento</h1>
+                <p>Gerencie sua licen&ccedil;a, m&oacute;dulos habilitados, quotas e sess&otilde;es ativas</p>
+                <div style="margin-top:12px">
+                    <span class="license-badge badge-setup" id="status-badge">Carregando...</span>
+                </div>
+            </div>
+
+            <div id="alert-area"></div>
+
+            <!-- Tab Navigation -->
+            <div class="tab-bar">
+                <button class="tab-btn active" onclick="showTab('activate')">Ativar Licen&ccedil;a</button>
+                <button class="tab-btn" onclick="showTab('status')">Status</button>
+                <button class="tab-btn" onclick="showTab('modules')">M&oacute;dulos</button>
+                <button class="tab-btn" onclick="showTab('quota')">Quota & Uso</button>
+                <button class="tab-btn" onclick="showTab('admin')">Admin</button>
+                <button class="tab-btn" onclick="showTab('audit')">Auditoria</button>
+            </div>
+
+            <!-- ACTIVATE TAB -->
+            <div id="tab-activate" class="tab-content active">
+                <div class="license-form-card">
+                    <h3>Ativar Licen&ccedil;a</h3>
+                    <p style="color:var(--text-secondary);margin-bottom:20px;font-size:13px">
+                        Insira sua chave de licen&ccedil;a para ativar o sistema. O sistema iniciar&aacute; em modo setup at&eacute; que uma licen&ccedil;a v&aacute;lida seja ativada.
+                    </p>
+                    <div class="key-input-group">
+                        <input type="text" class="form-input" id="license-key-input" placeholder="XXXX-XXXX-XXXX-XXXX-XXXX" maxlength="24">
+                        <button class="btn btn-primary" onclick="activateLicense()">Ativar</button>
+                    </div>
+                    <div style="margin-top:16px;display:flex;gap:12px">
+                        <button class="btn btn-secondary" onclick="validateLicense()">Apenas Validar</button>
+                        <button class="btn btn-secondary" onclick="validateOffline()">Validar Offline</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- STATUS TAB -->
+            <div id="tab-status" class="tab-content">
+                <div class="license-form-card">
+                    <h3>Informa&ccedil;&otilde;es da Licen&ccedil;a</h3>
+                    <div id="license-info-container">
+                        <div class="alert-box info">Nenhuma licen&ccedil;a ativa. Ative uma licen&ccedil;a na aba "Ativar Licen&ccedil;a".</div>
+                    </div>
+                </div>
+
+                <div class="license-form-card">
+                    <h3>Sess&otilde;es Ativas (Licen&ccedil;as Flutuantes)</h3>
+                    <div id="sessions-container">
+                        <p style="color:var(--text-secondary);font-size:13px">Nenhuma sess&atilde;o ativa.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- MODULES TAB -->
+            <div id="tab-modules" class="tab-content">
+                <div class="license-form-card">
+                    <h3>M&oacute;dulos do Sistema</h3>
+                    <p style="color:var(--text-secondary);margin-bottom:16px;font-size:13px">
+                        Os m&oacute;dulos abaixo s&atilde;o controlados pela sua licen&ccedil;a. M&oacute;dulos n&atilde;o licenciados ficam desabilitados.
+                    </p>
+                    <div class="modules-grid" id="modules-grid">
+                    </div>
+                </div>
+            </div>
+
+            <!-- QUOTA TAB -->
+            <div id="tab-quota" class="tab-content">
+                <div class="license-form-card">
+                    <h3>Quota de Dados Processados</h3>
+                    <div id="quota-container">
+                        <div class="quota-bar-container">
+                            <div class="quota-bar">
+                                <div class="quota-fill" id="quota-fill" style="width:0%"></div>
+                            </div>
+                            <div class="quota-label">
+                                <span id="quota-used">0 GB usados</span>
+                                <span id="quota-max">0 GB limite</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="license-form-card">
+                    <h3>Hist&oacute;rico de Uso</h3>
+                    <table class="data-table">
+                        <thead>
+                            <tr><th>Tipo</th><th>Quantidade</th><th>M&oacute;dulo</th><th>Data</th></tr>
+                        </thead>
+                        <tbody id="usage-history-body"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- ADMIN TAB -->
+            <div id="tab-admin" class="tab-content">
+                <div class="license-form-card">
+                    <h3>Gerar Nova Licen&ccedil;a</h3>
+                    <p style="color:var(--text-secondary);margin-bottom:20px;font-size:13px">
+                        Crie uma nova licen&ccedil;a para distribui&ccedil;&atilde;o. Selecione o tipo para ver os m&oacute;dulos inclusos.
+                    </p>
+                    <div class="form-group">
+                        <label class="form-label">Nome do Cliente</label>
+                        <input type="text" class="form-input" id="admin-customer" placeholder="Nome da empresa ou cliente">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Email (opcional)</label>
+                        <input type="email" class="form-input" id="admin-email" placeholder="email@exemplo.com">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Tipo de Licen&ccedil;a</label>
+                    </div>
+                    <div class="tier-cards" id="tier-cards">
+                        <div class="tier-card" data-tier="trial" onclick="selectTier('trial')">
+                            <h4>Trial</h4>
+                            <div class="tier-detail">5 hosts</div>
+                            <div class="tier-detail">0.5 GB/m&ecirc;s</div>
+                            <div class="tier-detail">30 dias</div>
+                            <div class="tier-detail">3 m&oacute;dulos</div>
+                        </div>
+                        <div class="tier-card" data-tier="standard" onclick="selectTier('standard')">
+                            <h4>Standard</h4>
+                            <div class="tier-detail">50 hosts</div>
+                            <div class="tier-detail">10 GB/m&ecirc;s</div>
+                            <div class="tier-detail">365 dias</div>
+                            <div class="tier-detail">7 m&oacute;dulos</div>
+                        </div>
+                        <div class="tier-card" data-tier="professional" onclick="selectTier('professional')">
+                            <h4>Professional</h4>
+                            <div class="tier-detail">500 hosts</div>
+                            <div class="tier-detail">100 GB/m&ecirc;s</div>
+                            <div class="tier-detail">365 dias</div>
+                            <div class="tier-detail">9 m&oacute;dulos</div>
+                        </div>
+                        <div class="tier-card" data-tier="enterprise" onclick="selectTier('enterprise')">
+                            <h4>Enterprise</h4>
+                            <div class="tier-detail">Ilimitado</div>
+                            <div class="tier-detail">Ilimitado</div>
+                            <div class="tier-detail">365 dias</div>
+                            <div class="tier-detail">Todos m&oacute;dulos</div>
+                        </div>
+                    </div>
+                    <button class="btn btn-primary" onclick="createLicense()" style="margin-top:16px">Gerar Licen&ccedil;a</button>
+                    <div id="created-license-result" style="margin-top:16px"></div>
+                </div>
+
+                <div class="license-form-card">
+                    <h3>Licen&ccedil;as Existentes</h3>
+                    <table class="data-table">
+                        <thead>
+                            <tr><th>Chave</th><th>Cliente</th><th>Tipo</th><th>Status</th><th>Expira</th><th>M&oacute;dulos</th></tr>
+                        </thead>
+                        <tbody id="licenses-table-body"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- AUDIT TAB -->
+            <div id="tab-audit" class="tab-content">
+                <div class="license-form-card">
+                    <h3>Log de Auditoria</h3>
+                    <div class="audit-log" id="audit-log-container"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API = '/api/licensing';
+        let selectedTier = 'trial';
+
+        // --- Tab Management ---
+        function showTab(tabId) {
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.getElementById('tab-' + tabId).classList.add('active');
+            event.target.classList.add('active');
+
+            if (tabId === 'status') loadStatus();
+            if (tabId === 'modules') loadModules();
+            if (tabId === 'quota') { loadQuota(); loadUsageHistory(); }
+            if (tabId === 'admin') loadLicenses();
+            if (tabId === 'audit') loadAuditLog();
+        }
+
+        function showAlert(msg, type) {
+            const area = document.getElementById('alert-area');
+            area.innerHTML = `<div class="alert-box ${type}">${msg}</div>`;
+            setTimeout(() => area.innerHTML = '', 8000);
+        }
+
+        // --- Activate / Validate ---
+        async function activateLicense() {
+            const key = document.getElementById('license-key-input').value.trim();
+            if (!key) { showAlert('Insira uma chave de licen\u00e7a.', 'warning'); return; }
+            try {
+                const res = await fetch(API + '/activate', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ license_key: key })
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    showAlert('Licen\u00e7a ativada com sucesso!', 'success');
+                    loadStatus();
+                    loadModules();
+                    loadQuota();
+                    updateBadge();
+                } else {
+                    showAlert('Erro: ' + JSON.stringify(data.detail), 'error');
+                }
+            } catch (e) { showAlert('Erro de conex\u00e3o: ' + e.message, 'error'); }
+        }
+
+        async function validateLicense() {
+            const key = document.getElementById('license-key-input').value.trim();
+            if (!key) { showAlert('Insira uma chave de licen\u00e7a.', 'warning'); return; }
+            try {
+                const res = await fetch(API + '/validate', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ license_key: key })
+                });
+                const data = await res.json();
+                if (data.valid) {
+                    showAlert('Licen\u00e7a v\u00e1lida! Chain of trust verificada.', 'success');
+                } else {
+                    showAlert('Licen\u00e7a inv\u00e1lida: ' + data.errors.join(', '), 'error');
+                }
+            } catch (e) { showAlert('Erro: ' + e.message, 'error'); }
+        }
+
+        async function validateOffline() {
+            const key = document.getElementById('license-key-input').value.trim();
+            if (!key) { showAlert('Insira uma chave de licen\u00e7a.', 'warning'); return; }
+            try {
+                const res = await fetch(API + '/validate-offline', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ license_key: key })
+                });
+                const data = await res.json();
+                if (data.valid) {
+                    const msg = `Licen\u00e7a validada via cache offline. Grace period restante: ${data.grace_remaining_hours}h`;
+                    showAlert(msg, 'success');
+                } else {
+                    showAlert('Cache inv\u00e1lido: ' + data.errors.join(', '), 'error');
+                }
+            } catch (e) { showAlert('Erro: ' + e.message, 'error'); }
+        }
+
+        // --- Status ---
+        async function loadStatus() {
+            try {
+                const res = await fetch(API + '/status');
+                const data = await res.json();
+
+                const container = document.getElementById('license-info-container');
+                if (!data.licensed) {
+                    container.innerHTML = '<div class="alert-box info">Nenhuma licen\u00e7a ativa. Ative uma licen\u00e7a na aba "Ativar Licen\u00e7a".</div>';
+                    return;
+                }
+
+                const lic = data.license;
+                container.innerHTML = `
+                    <div class="info-grid">
+                        <div class="info-item"><span class="info-label">Chave</span><span class="info-value" style="font-family:monospace">${lic.key || '-'}</span></div>
+                        <div class="info-item"><span class="info-label">Tipo</span><span class="info-value">${lic.type || '-'}</span></div>
+                        <div class="info-item"><span class="info-label">Cliente</span><span class="info-value">${lic.customer || '-'}</span></div>
+                        <div class="info-item"><span class="info-label">Max Hosts</span><span class="info-value">${lic.max_hosts === -1 ? 'Ilimitado' : lic.max_hosts}</span></div>
+                        <div class="info-item"><span class="info-label">Max GB/m\u00eas</span><span class="info-value">${lic.max_gb_processed === -1 ? 'Ilimitado' : lic.max_gb_processed + ' GB'}</span></div>
+                        <div class="info-item"><span class="info-label">M\u00f3dulos</span><span class="info-value">${(lic.modules || []).length}</span></div>
+                    </div>
+                `;
+
+                // Sessions
+                const sessContainer = document.getElementById('sessions-container');
+                sessContainer.innerHTML = `
+                    <div class="info-grid">
+                        <div class="info-item"><span class="info-label">Sess\u00f5es Ativas</span><span class="info-value">${data.active_sessions}</span></div>
+                        <div class="info-item"><span class="info-label">Max Sess\u00f5es</span><span class="info-value">${data.max_sessions === -1 ? 'Ilimitado' : data.max_sessions}</span></div>
+                    </div>
+                `;
+            } catch (e) { console.error('Error loading status:', e); }
+        }
+
+        // --- Modules ---
+        async function loadModules() {
+            try {
+                const res = await fetch(API + '/modules');
+                const data = await res.json();
+                const grid = document.getElementById('modules-grid');
+
+                const moduleLabels = {
+                    scanner: 'Scanner de Rede', ids: 'IDS', snmp: 'SNMP',
+                    agent: 'Agente', pentest: 'Pentest', logs: 'An\u00e1lise de Logs',
+                    anomaly: 'Anomalias', topology: 'Topologia', network: 'Rede',
+                    dashboard: 'Dashboard'
+                };
+
+                grid.innerHTML = data.modules.map(m => `
+                    <div class="module-card ${m.licensed ? 'licensed' : 'unlicensed'}">
+                        <div class="module-dot ${m.licensed ? 'on' : 'off'}"></div>
+                        <div class="module-name">${moduleLabels[m.name] || m.name}</div>
+                    </div>
+                `).join('');
+            } catch (e) { console.error('Error loading modules:', e); }
+        }
+
+        // --- Quota ---
+        async function loadQuota() {
+            try {
+                const res = await fetch(API + '/quota');
+                const data = await res.json();
+
+                if (data.unlimited) {
+                    document.getElementById('quota-fill').style.width = '0%';
+                    document.getElementById('quota-used').textContent = 'Uso ilimitado';
+                    document.getElementById('quota-max').textContent = '';
+                    return;
+                }
+
+                const pct = data.max_gb > 0 ? Math.min((data.used_gb / data.max_gb) * 100, 100) : 0;
+                const fill = document.getElementById('quota-fill');
+                fill.style.width = pct + '%';
+                fill.className = 'quota-fill' + (pct > 80 ? ' warning' : '');
+                document.getElementById('quota-used').textContent = data.used_gb.toFixed(2) + ' GB usados';
+                document.getElementById('quota-max').textContent = data.max_gb + ' GB limite';
+            } catch (e) { console.error('Error loading quota:', e); }
+        }
+
+        async function loadUsageHistory() {
+            try {
+                const res = await fetch(API + '/usage/history?days=30');
+                const data = await res.json();
+                const tbody = document.getElementById('usage-history-body');
+
+                if (!data.records || data.records.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text-secondary)">Nenhum registro de uso</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = data.records.map(r => `
+                    <tr>
+                        <td>${r.type}</td>
+                        <td>${r.amount.toFixed(4)} ${r.unit}</td>
+                        <td>${r.module || '-'}</td>
+                        <td>${new Date(r.recorded_at).toLocaleString('pt-BR')}</td>
+                    </tr>
+                `).join('');
+            } catch (e) { console.error('Error loading usage:', e); }
+        }
+
+        // --- Admin ---
+        function selectTier(tier) {
+            selectedTier = tier;
+            document.querySelectorAll('.tier-card').forEach(c => c.classList.remove('selected'));
+            document.querySelector(`.tier-card[data-tier="${tier}"]`).classList.add('selected');
+        }
+
+        async function createLicense() {
+            const customer = document.getElementById('admin-customer').value.trim();
+            if (!customer) { showAlert('Informe o nome do cliente.', 'warning'); return; }
+
+            const email = document.getElementById('admin-email').value.trim();
+            try {
+                const res = await fetch(API + '/licenses', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        customer_name: customer,
+                        license_type: selectedTier,
+                        customer_email: email || null
+                    })
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    document.getElementById('created-license-result').innerHTML = `
+                        <div class="alert-box success">
+                            Licen\u00e7a criada!<br>
+                            <strong style="font-family:monospace;font-size:16px;letter-spacing:1px">${data.license_key}</strong><br>
+                            Tipo: ${data.license_type} | M\u00f3dulos: ${data.modules.join(', ')}
+                        </div>
+                    `;
+                    loadLicenses();
+                } else {
+                    showAlert('Erro: ' + JSON.stringify(data.detail), 'error');
+                }
+            } catch (e) { showAlert('Erro: ' + e.message, 'error'); }
+        }
+
+        async function loadLicenses() {
+            try {
+                const res = await fetch(API + '/licenses');
+                const data = await res.json();
+                const tbody = document.getElementById('licenses-table-body');
+
+                if (!data.length) {
+                    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-secondary)">Nenhuma licen\u00e7a encontrada</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = data.map(l => `
+                    <tr>
+                        <td style="font-family:monospace;font-size:11px">${l.license_key}</td>
+                        <td>${l.customer}</td>
+                        <td>${l.type}</td>
+                        <td><span class="license-badge badge-${l.status === 'active' ? 'active' : 'expired'}">${l.status}</span></td>
+                        <td>${l.expires_at ? new Date(l.expires_at).toLocaleDateString('pt-BR') : 'Nunca'}</td>
+                        <td>${l.modules.join(', ')}</td>
+                    </tr>
+                `).join('');
+            } catch (e) { console.error('Error loading licenses:', e); }
+        }
+
+        // --- Audit ---
+        async function loadAuditLog() {
+            try {
+                const res = await fetch(API + '/audit?limit=100');
+                const data = await res.json();
+                const container = document.getElementById('audit-log-container');
+
+                if (!data.length) {
+                    container.innerHTML = '<p style="color:var(--text-secondary);font-size:13px;text-align:center;padding:20px">Nenhum registro de auditoria.</p>';
+                    return;
+                }
+
+                container.innerHTML = data.map(e => `
+                    <div class="audit-entry">
+                        <span><span class="audit-action">${e.action}</span> &mdash; ${e.machine_id ? e.machine_id.substring(0, 12) + '...' : ''}</span>
+                        <span class="audit-time">${new Date(e.timestamp).toLocaleString('pt-BR')}</span>
+                    </div>
+                `).join('');
+            } catch (e) { console.error('Error loading audit:', e); }
+        }
+
+        // --- Status Badge ---
+        async function updateBadge() {
+            try {
+                const res = await fetch(API + '/status');
+                const data = await res.json();
+                const badge = document.getElementById('status-badge');
+                if (data.licensed) {
+                    badge.textContent = 'Licenciado - ' + (data.license.type || '');
+                    badge.className = 'license-badge badge-active';
+                } else {
+                    badge.textContent = 'Modo Setup - Sem Licen\u00e7a';
+                    badge.className = 'license-badge badge-setup';
+                }
+            } catch (e) { console.error(e); }
+        }
+
+        // --- Init ---
+        document.addEventListener('DOMContentLoaded', () => {
+            updateBadge();
+            selectTier('trial');
+        });
+    </script>
+</body>
+</html>
