@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AptumNet - Network Monitoring & Security</title>
     <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 </head>
 <body>
     <!-- Sidebar -->
@@ -34,6 +35,9 @@
             </a>
             <a class="nav-item" onclick="showPage('services')">
                 <span class="nav-icon">&#9881;</span><span>Servi&ccedil;os</span>
+            </a>
+            <a class="nav-item" onclick="showPage('snmp')">
+                <span class="nav-icon">&#9851;</span><span>SNMP Devices</span>
             </a>
         </div>
 
@@ -447,6 +451,270 @@
                     <div class="severity-item"><span class="severity-dot" style="background:#f59e0b"></span> Impressora</div>
                     <div class="severity-item"><span class="severity-dot" style="background:#6b7280"></span> Desconhecido</div>
                     <div class="severity-item"><span class="severity-dot" style="background:#ef4444"></span> Host com Alerta</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- HOST DETAIL PAGE (drill-down, no popup) -->
+        <div id="page-host-detail" class="page" style="display:none">
+            <div class="page-header">
+                <div>
+                    <a style="cursor:pointer;color:var(--accent-cyan);font-size:13px" onclick="showPage('hosts')">&larr; Voltar para Hosts</a>
+                    <h2 class="page-title" id="host-detail-title">Detalhes do Host</h2>
+                    <p class="page-subtitle" id="host-detail-subtitle"></p>
+                </div>
+                <div style="display:flex;gap:8px">
+                    <button class="btn btn-primary" onclick="refreshHostDetail()">&#8635; Atualizar</button>
+                    <button class="btn btn-success" onclick="saveHostConfig()">Salvar Config</button>
+                </div>
+            </div>
+
+            <!-- Host Info Cards -->
+            <div class="stats-grid" id="host-detail-stats"></div>
+
+            <!-- Configuration Panel -->
+            <div class="panel" style="margin-bottom:20px">
+                <div class="panel-header">
+                    <span class="panel-title">Configura&ccedil;&atilde;o do Host</span>
+                </div>
+                <div class="panel-body">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">Hostname</label>
+                            <input type="text" class="form-input" id="hd-hostname">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Tipo</label>
+                            <select class="form-select" id="hd-host-type">
+                                <option value="server">Servidor</option>
+                                <option value="workstation">Workstation</option>
+                                <option value="router">Roteador</option>
+                                <option value="switch">Switch</option>
+                                <option value="firewall">Firewall</option>
+                                <option value="printer">Impressora</option>
+                                <option value="unknown">Desconhecido</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Localiza&ccedil;&atilde;o</label>
+                            <input type="text" class="form-input" id="hd-location" placeholder="Sala, rack, etc.">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">SNMP Community</label>
+                            <input type="text" class="form-input" id="hd-snmp-community" placeholder="public">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Pastas de Logs para Encaminhamento (uma por linha)</label>
+                        <textarea class="form-input" id="hd-log-paths" rows="3" placeholder="/var/log/syslog&#10;/var/log/auth.log&#10;/var/log/nginx/access.log"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Notas</label>
+                        <textarea class="form-input" id="hd-notes" rows="2" placeholder="Observa&ccedil;&otilde;es sobre este host..."></textarea>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Metrics Charts -->
+            <div class="panel" style="margin-bottom:20px">
+                <div class="panel-header">
+                    <span class="panel-title">Hist&oacute;rico de M&eacute;tricas</span>
+                    <div>
+                        <select class="form-select" id="metrics-range" onchange="loadMetricsChart()" style="width:auto;display:inline-block">
+                            <option value="5m">5 minutos</option>
+                            <option value="15m">15 minutos</option>
+                            <option value="30m">30 minutos</option>
+                            <option value="1h" selected>1 hora</option>
+                            <option value="2h">2 horas</option>
+                            <option value="6h">6 horas</option>
+                            <option value="12h">12 horas</option>
+                            <option value="today">Dia atual</option>
+                            <option value="24h">24 horas</option>
+                            <option value="yesterday">Ontem</option>
+                            <option value="week">Semana</option>
+                            <option value="15d">15 dias</option>
+                            <option value="month">Mensal</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="panel-body">
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+                        <div><canvas id="chart-cpu"></canvas></div>
+                        <div><canvas id="chart-memory"></canvas></div>
+                        <div><canvas id="chart-disk"></canvas></div>
+                        <div><canvas id="chart-network"></canvas></div>
+                    </div>
+                    <div class="empty-state" id="no-metrics-chart" style="display:none">
+                        <p>Nenhuma m&eacute;trica dispon&iacute;vel para o per&iacute;odo selecionado.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Ports Table -->
+            <div class="panel" style="margin-bottom:20px">
+                <div class="panel-header">
+                    <span class="panel-title">Portas e Servi&ccedil;os</span>
+                </div>
+                <div class="panel-body">
+                    <table class="data-table">
+                        <thead>
+                            <tr><th>Porta</th><th>Protocolo</th><th>Estado</th><th>Servi&ccedil;o</th><th>Vers&atilde;o</th><th>Banner</th></tr>
+                        </thead>
+                        <tbody id="host-detail-ports"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Alerts -->
+            <div class="panel">
+                <div class="panel-header">
+                    <span class="panel-title">Alertas do Host</span>
+                </div>
+                <div class="panel-body">
+                    <table class="data-table">
+                        <thead>
+                            <tr><th>Severidade</th><th>T&iacute;tulo</th><th>Tipo</th><th>Status</th><th>Data</th></tr>
+                        </thead>
+                        <tbody id="host-detail-alerts"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- SNMP DEVICES PAGE (drill-down dashboard) -->
+        <div id="page-snmp" class="page" style="display:none">
+            <div class="page-header">
+                <div>
+                    <h2 class="page-title">SNMP - Ativos de Rede</h2>
+                    <p class="page-subtitle">Dashboard de dispositivos com SNMP habilitado</p>
+                </div>
+                <button class="btn btn-primary" onclick="loadSNMPDevices()">&#8635; Atualizar</button>
+            </div>
+
+            <!-- SNMP Device List (shown when no device selected) -->
+            <div id="snmp-list-view">
+                <div class="stats-grid" id="snmp-stats-grid"></div>
+                <div class="panel">
+                    <div class="panel-header">
+                        <span class="panel-title">Dispositivos SNMP</span>
+                    </div>
+                    <div class="panel-body">
+                        <table class="data-table">
+                            <thead>
+                                <tr><th>IP</th><th>Hostname</th><th>Tipo</th><th>Status</th><th>Fabricante</th><th>SO</th><th>Community</th><th>&Uacute;ltima vez</th></tr>
+                            </thead>
+                            <tbody id="snmp-devices-body"></tbody>
+                        </table>
+                        <div class="empty-state" id="no-snmp-devices" style="display:none">
+                            <div class="empty-state-icon">&#9851;</div>
+                            <p>Nenhum dispositivo SNMP encontrado. Colete dados SNMP na p&aacute;gina de Hosts.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SNMP Device Detail (shown when a device is selected) -->
+            <div id="snmp-detail-view" style="display:none">
+                <div style="margin-bottom:16px">
+                    <a style="cursor:pointer;color:var(--accent-cyan);font-size:13px" onclick="showSNMPList()">&larr; Voltar para lista</a>
+                </div>
+
+                <div class="stats-grid" id="snmp-detail-stats"></div>
+
+                <!-- System Info -->
+                <div class="panel" style="margin-bottom:20px">
+                    <div class="panel-header">
+                        <span class="panel-title">Informa&ccedil;&otilde;es do Sistema (SNMP)</span>
+                    </div>
+                    <div class="panel-body" id="snmp-system-info"></div>
+                </div>
+
+                <!-- Metrics Charts -->
+                <div class="panel" style="margin-bottom:20px">
+                    <div class="panel-header">
+                        <span class="panel-title">Hist&oacute;rico de M&eacute;tricas</span>
+                        <select class="form-select" id="snmp-metrics-range" onchange="loadSNMPMetricsChart()" style="width:auto;display:inline-block">
+                            <option value="5m">5 min</option>
+                            <option value="15m">15 min</option>
+                            <option value="30m">30 min</option>
+                            <option value="1h" selected>1 hora</option>
+                            <option value="2h">2 horas</option>
+                            <option value="6h">6 horas</option>
+                            <option value="12h">12 horas</option>
+                            <option value="today">Dia atual</option>
+                            <option value="24h">24 horas</option>
+                            <option value="yesterday">Ontem</option>
+                            <option value="week">Semana</option>
+                            <option value="15d">15 dias</option>
+                            <option value="month">Mensal</option>
+                        </select>
+                    </div>
+                    <div class="panel-body">
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+                            <div><canvas id="snmp-chart-cpu"></canvas></div>
+                            <div><canvas id="snmp-chart-disk"></canvas></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Interfaces Table -->
+                <div class="panel" style="margin-bottom:20px">
+                    <div class="panel-header">
+                        <span class="panel-title">Interfaces de Rede</span>
+                    </div>
+                    <div class="panel-body">
+                        <table class="data-table">
+                            <thead>
+                                <tr><th>Interface</th><th>Status</th><th>Bytes In</th><th>Bytes Out</th></tr>
+                            </thead>
+                            <tbody id="snmp-interfaces-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Storage Table -->
+                <div class="panel" style="margin-bottom:20px">
+                    <div class="panel-header">
+                        <span class="panel-title">Armazenamento</span>
+                    </div>
+                    <div class="panel-body">
+                        <table class="data-table">
+                            <thead>
+                                <tr><th>Nome</th><th>Tamanho</th><th>Usado</th><th>Uso %</th></tr>
+                            </thead>
+                            <tbody id="snmp-storage-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Ports Table -->
+                <div class="panel" style="margin-bottom:20px">
+                    <div class="panel-header">
+                        <span class="panel-title">Portas de Comunica&ccedil;&atilde;o</span>
+                    </div>
+                    <div class="panel-body">
+                        <table class="data-table">
+                            <thead>
+                                <tr><th>Porta</th><th>Protocolo</th><th>Estado</th><th>Servi&ccedil;o</th><th>Banner</th></tr>
+                            </thead>
+                            <tbody id="snmp-ports-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Alerts -->
+                <div class="panel">
+                    <div class="panel-header">
+                        <span class="panel-title">Alertas</span>
+                    </div>
+                    <div class="panel-body">
+                        <table class="data-table">
+                            <thead>
+                                <tr><th>Severidade</th><th>T&iacute;tulo</th><th>Status</th><th>Data</th></tr>
+                            </thead>
+                            <tbody id="snmp-alerts-body"></tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
         </div>

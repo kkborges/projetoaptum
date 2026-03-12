@@ -53,6 +53,8 @@ class HostUpdate(BaseModel):
     notes: Optional[str] = None
     topology_x: Optional[float] = None
     topology_y: Optional[float] = None
+    log_paths: Optional[list[str]] = None
+    snmp_community: Optional[str] = None
 
 
 class AlertUpdate(BaseModel):
@@ -142,6 +144,8 @@ def get_host(host_id: int, db: Session = Depends(get_db)):
         "last_seen": host.last_seen.isoformat() if host.last_seen else None,
         "location": host.location, "notes": host.notes,
         "topology_x": host.topology_x, "topology_y": host.topology_y,
+        "log_paths": host.log_paths or [],
+        "snmp_community": host.snmp_community or "public",
         "ports": [
             {
                 "port": p.port_number, "protocol": p.protocol,
@@ -453,6 +457,169 @@ async def snmp_collect(host_id: int, db: Session = Depends(get_db)):
         db.commit()
 
     return {"snmp_available": info.get("snmp_available", False), "info": info}
+
+
+@router.get("/snmp/devices")
+def list_snmp_devices(db: Session = Depends(get_db)):
+    """List all SNMP-enabled devices."""
+    hosts = db.query(Host).filter(Host.snmp_enabled == True).order_by(Host.ip_address).all()
+    return [
+        {
+            "id": h.id, "ip_address": h.ip_address, "hostname": h.hostname,
+            "vendor": h.vendor, "os_detected": h.os_detected,
+            "status": h.status, "host_type": h.host_type,
+            "location": h.location, "snmp_community": h.snmp_community or "public",
+            "last_seen": h.last_seen.isoformat() if h.last_seen else None,
+            "open_ports": len([p for p in h.ports if p.state == "open"]),
+        }
+        for h in hosts
+    ]
+
+
+@router.get("/snmp/device/{host_id}")
+async def get_snmp_device_detail(host_id: int, db: Session = Depends(get_db)):
+    """Get full SNMP details for a device — system info, interfaces, storage, metrics."""
+    host = db.query(Host).filter(Host.id == host_id).first()
+    if not host:
+        raise HTTPException(status_code=404, detail="Host not found")
+
+    community = host.snmp_community or "public"
+    info = await collect_host_info(host.ip_address, community)
+    metrics_data = await collect_metrics(host.ip_address, community)
+
+    # Save collected metrics to DB
+    now = datetime.utcnow()
+    if info.get("snmp_available"):
+        host.snmp_enabled = True
+        host.last_seen = now
+        if info.get("sys_name"):
+            host.hostname = info["sys_name"]
+
+        for cpu in metrics_data.get("cpu", []):
+            db.add(HostMetric(
+                host_id=host.id, metric_type="cpu",
+                metric_value=cpu["load_percent"], metric_unit="%",
+                details=cpu, collected_at=now, source="snmp"
+            ))
+        for storage in metrics_data.get("storage", []):
+            if "usage_percent" in storage:
+                db.add(HostMetric(
+                    host_id=host.id, metric_type="disk",
+                    metric_value=storage["usage_percent"], metric_unit="%",
+                    details=storage, collected_at=now, source="snmp"
+                ))
+        db.commit()
+
+    return {
+        "id": host.id,
+        "ip_address": host.ip_address,
+        "hostname": host.hostname,
+        "vendor": host.vendor,
+        "os_detected": host.os_detected,
+        "status": host.status,
+        "host_type": host.host_type,
+        "location": host.location,
+        "snmp_community": community,
+        "first_seen": host.first_seen.isoformat(),
+        "last_seen": host.last_seen.isoformat() if host.last_seen else None,
+        "snmp_info": info,
+        "snmp_metrics": metrics_data,
+        "ports": [
+            {
+                "port": p.port_number, "protocol": p.protocol,
+                "state": p.state, "service": p.service_name,
+                "version": p.service_version, "banner": p.banner,
+            }
+            for p in host.ports
+        ],
+        "alerts": [
+            {
+                "id": a.id, "type": a.alert_type, "severity": a.severity,
+                "title": a.title, "status": a.status,
+                "created_at": a.created_at.isoformat(),
+            }
+            for a in host.alerts if a.status == "open"
+        ],
+    }
+
+
+# --- Metrics History ---
+
+@router.get("/hosts/{host_id}/metrics")
+def get_host_metrics_history(
+    host_id: int,
+    metric_type: Optional[str] = None,
+    range: str = "1h",
+    db: Session = Depends(get_db)
+):
+    """Get metrics history for a host with time range support.
+
+    Ranges: 5m, 15m, 30m, 1h, 2h, 6h, 12h, today, 24h, yesterday, week, 15d, month, custom
+    For custom, pass start= and end= as ISO datetime params.
+    """
+    from datetime import timedelta
+
+    host = db.query(Host).filter(Host.id == host_id).first()
+    if not host:
+        raise HTTPException(status_code=404, detail="Host not found")
+
+    now = datetime.utcnow()
+    range_map = {
+        "5m": timedelta(minutes=5),
+        "15m": timedelta(minutes=15),
+        "30m": timedelta(minutes=30),
+        "1h": timedelta(hours=1),
+        "2h": timedelta(hours=2),
+        "6h": timedelta(hours=6),
+        "12h": timedelta(hours=12),
+        "24h": timedelta(hours=24),
+        "today": None,  # special
+        "yesterday": None,  # special
+        "week": timedelta(weeks=1),
+        "15d": timedelta(days=15),
+        "month": timedelta(days=30),
+    }
+
+    if range == "today":
+        start_dt = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_dt = now
+    elif range == "yesterday":
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        start_dt = today_start - timedelta(days=1)
+        end_dt = today_start
+    elif range in range_map and range_map[range]:
+        start_dt = now - range_map[range]
+        end_dt = now
+    else:
+        start_dt = now - timedelta(hours=1)
+        end_dt = now
+
+    query = db.query(HostMetric).filter(
+        HostMetric.host_id == host_id,
+        HostMetric.collected_at >= start_dt,
+        HostMetric.collected_at <= end_dt,
+    )
+    if metric_type:
+        query = query.filter(HostMetric.metric_type == metric_type)
+
+    metrics = query.order_by(HostMetric.collected_at.asc()).limit(2000).all()
+
+    # Group by type for chart-friendly format
+    series = {}
+    for m in metrics:
+        if m.metric_type not in series:
+            series[m.metric_type] = {"labels": [], "values": [], "unit": m.metric_unit}
+        series[m.metric_type]["labels"].append(m.collected_at.isoformat())
+        series[m.metric_type]["values"].append(m.metric_value)
+
+    return {
+        "host_id": host_id,
+        "range": range,
+        "start": start_dt.isoformat(),
+        "end": end_dt.isoformat(),
+        "series": series,
+        "total_points": len(metrics),
+    }
 
 
 # --- Alerts ---

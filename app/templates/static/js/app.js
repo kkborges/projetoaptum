@@ -2,6 +2,12 @@
 
 const API = '/api';
 
+// --- State ---
+let currentHostId = null;
+let currentSNMPDeviceId = null;
+let metricsCharts = {};
+let snmpCharts = {};
+
 // --- Navigation ---
 function showPage(page) {
     document.querySelectorAll('.page').forEach(p => p.style.display = 'none');
@@ -12,7 +18,7 @@ function showPage(page) {
 
     // Find and activate nav item
     document.querySelectorAll('.nav-item').forEach(n => {
-        if (n.getAttribute('onclick') && n.getAttribute('onclick').includes(page)) {
+        if (n.getAttribute('onclick') && n.getAttribute('onclick').includes("'" + page + "'")) {
             n.classList.add('active');
         }
     });
@@ -28,6 +34,7 @@ function showPage(page) {
         case 'logs': loadLogSummary(); break;
         case 'anomalies': loadAnomalies(); break;
         case 'topology': loadTopology(); break;
+        case 'snmp': loadSNMPDevices(); break;
     }
 }
 
@@ -84,12 +91,26 @@ function formatDate(isoStr) {
     return d.toLocaleString('pt-BR');
 }
 
+function formatDateShort(isoStr) {
+    if (!isoStr) return '';
+    const d = new Date(isoStr);
+    return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+}
+
 function severityBadge(severity) {
     return `<span class="badge badge-${severity}">${severity}</span>`;
 }
 
 function statusBadge(status) {
     return `<span class="badge badge-${status}">${status}</span>`;
+}
+
+function formatBytes(bytes) {
+    if (!bytes || bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 }
 
 // --- Dashboard ---
@@ -148,9 +169,9 @@ async function refreshDashboard() {
 
     const sevBar = document.getElementById('ids-severity-bar');
     sevBar.innerHTML = `
-        <div class="severity-item"><span class="severity-dot critical"></span> Cr&iacute;tico: ${idsStats.by_severity.critical}</div>
+        <div class="severity-item"><span class="severity-dot critical"></span> Cr\u00edtico: ${idsStats.by_severity.critical}</div>
         <div class="severity-item"><span class="severity-dot high"></span> Alto: ${idsStats.by_severity.high}</div>
-        <div class="severity-item"><span class="severity-dot medium"></span> M&eacute;dio: ${idsStats.by_severity.medium}</div>
+        <div class="severity-item"><span class="severity-dot medium"></span> M\u00e9dio: ${idsStats.by_severity.medium}</div>
         <div class="severity-item"><span class="severity-dot low"></span> Baixo: ${idsStats.by_severity.low}</div>
     `;
 }
@@ -169,7 +190,7 @@ async function loadHosts() {
     noHosts.style.display = 'none';
 
     tbody.innerHTML = hosts.map(h => `
-        <tr style="cursor:pointer" onclick="viewHost(${h.id})">
+        <tr style="cursor:pointer" onclick="viewHostDetail(${h.id})">
             <td><strong>${h.ip_address}</strong></td>
             <td>${h.hostname || '-'}</td>
             <td>${h.host_type || 'unknown'}</td>
@@ -182,31 +203,347 @@ async function loadHosts() {
     `).join('');
 }
 
-async function viewHost(hostId) {
+// --- Host Detail (drill-down, no popup) ---
+async function viewHostDetail(hostId) {
+    currentHostId = hostId;
     const host = await apiGet('/hosts/' + hostId);
     if (!host) return;
 
-    let html = `<h3>${host.ip_address} - ${host.hostname || 'N/A'}</h3>`;
-    html += `<p>Tipo: ${host.host_type} | Status: ${host.status} | OS: ${host.os_detected || 'N/A'}</p>`;
-    html += `<p>SNMP: ${host.snmp_enabled ? 'Sim' : 'Nao'} | Agente: ${host.agent_installed ? 'Sim' : 'Nao'}</p>`;
+    // Switch to detail page
+    document.querySelectorAll('.page').forEach(p => p.style.display = 'none');
+    document.getElementById('page-host-detail').style.display = 'block';
 
+    document.getElementById('host-detail-title').textContent = `${host.ip_address} - ${host.hostname || 'N/A'}`;
+    document.getElementById('host-detail-subtitle').textContent =
+        `Tipo: ${host.host_type} | OS: ${host.os_detected || 'N/A'} | Status: ${host.status}`;
+
+    // Stats cards
+    document.getElementById('host-detail-stats').innerHTML = `
+        <div class="stat-card"><div class="stat-label">Status</div><div class="stat-value ${host.status === 'up' ? 'green' : 'red'}">${host.status}</div></div>
+        <div class="stat-card"><div class="stat-label">Portas Abertas</div><div class="stat-value cyan">${host.ports.filter(p => p.state === 'open').length}</div></div>
+        <div class="stat-card"><div class="stat-label">SNMP</div><div class="stat-value ${host.snmp_enabled ? 'green' : 'red'}">${host.snmp_enabled ? 'Sim' : 'N\u00e3o'}</div></div>
+        <div class="stat-card"><div class="stat-label">Agente</div><div class="stat-value ${host.agent_installed ? 'green' : 'red'}">${host.agent_installed ? 'Sim' : 'N\u00e3o'}</div></div>
+        <div class="stat-card"><div class="stat-label">Alertas Abertos</div><div class="stat-value yellow">${host.alerts.filter(a => a.status === 'open').length}</div></div>
+        <div class="stat-card"><div class="stat-label">Primeira vez</div><div class="stat-value" style="font-size:14px">${formatDate(host.first_seen)}</div></div>
+    `;
+
+    // Config fields
+    document.getElementById('hd-hostname').value = host.hostname || '';
+    document.getElementById('hd-host-type').value = host.host_type || 'unknown';
+    document.getElementById('hd-location').value = host.location || '';
+    document.getElementById('hd-snmp-community').value = host.snmp_community || 'public';
+    document.getElementById('hd-log-paths').value = (host.log_paths || []).join('\n');
+    document.getElementById('hd-notes').value = host.notes || '';
+
+    // Ports
+    const portsTbody = document.getElementById('host-detail-ports');
     if (host.ports.length > 0) {
-        html += `<h4 style="margin-top:16px">Portas Abertas</h4><table class="data-table"><thead><tr><th>Porta</th><th>Servico</th><th>Estado</th><th>Banner</th></tr></thead><tbody>`;
-        host.ports.filter(p => p.state === 'open').forEach(p => {
-            html += `<tr><td>${p.port}/${p.protocol}</td><td>${p.service || '-'}</td><td>${statusBadge(p.state)}</td><td>${(p.banner || '-').substring(0, 60)}</td></tr>`;
-        });
-        html += `</tbody></table>`;
+        portsTbody.innerHTML = host.ports.map(p => `
+            <tr>
+                <td>${p.port}</td>
+                <td>${p.protocol}</td>
+                <td>${statusBadge(p.state)}</td>
+                <td>${p.service || '-'}</td>
+                <td>${p.version || '-'}</td>
+                <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis">${p.banner || '-'}</td>
+            </tr>
+        `).join('');
+    } else {
+        portsTbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-secondary)">Nenhuma porta detectada</td></tr>';
     }
 
-    if (host.recent_metrics.length > 0) {
-        html += `<h4 style="margin-top:16px">Metricas Recentes</h4><table class="data-table"><thead><tr><th>Tipo</th><th>Valor</th><th>Coletado em</th></tr></thead><tbody>`;
-        host.recent_metrics.slice(0, 10).forEach(m => {
-            html += `<tr><td>${m.type}</td><td>${m.value}${m.unit || ''}</td><td>${formatDate(m.collected_at)}</td></tr>`;
-        });
-        html += `</tbody></table>`;
+    // Alerts
+    const alertsTbody = document.getElementById('host-detail-alerts');
+    if (host.alerts.length > 0) {
+        alertsTbody.innerHTML = host.alerts.map(a => `
+            <tr>
+                <td>${severityBadge(a.severity)}</td>
+                <td>${a.title}</td>
+                <td>${a.type}</td>
+                <td>${statusBadge(a.status)}</td>
+                <td>${formatDate(a.created_at)}</td>
+            </tr>
+        `).join('');
+    } else {
+        alertsTbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-secondary)">Nenhum alerta</td></tr>';
     }
 
-    showModal('Detalhes do Host', html);
+    // Load metrics chart
+    loadMetricsChart();
+}
+
+function refreshHostDetail() {
+    if (currentHostId) viewHostDetail(currentHostId);
+}
+
+async function saveHostConfig() {
+    if (!currentHostId) return;
+    const logPathsRaw = document.getElementById('hd-log-paths').value.trim();
+    const logPaths = logPathsRaw ? logPathsRaw.split('\n').map(p => p.trim()).filter(p => p) : [];
+
+    const data = {
+        hostname: document.getElementById('hd-hostname').value.trim() || null,
+        host_type: document.getElementById('hd-host-type').value,
+        location: document.getElementById('hd-location').value.trim() || null,
+        snmp_community: document.getElementById('hd-snmp-community').value.trim() || null,
+        log_paths: logPaths,
+        notes: document.getElementById('hd-notes').value.trim() || null,
+    };
+
+    const result = await apiPut('/hosts/' + currentHostId, data);
+    if (result && result.status === 'updated') {
+        notify('Configura\u00e7\u00e3o salva com sucesso', 'success');
+    } else {
+        notify('Erro ao salvar', 'error');
+    }
+}
+
+// --- Metrics Charts (Chart.js) ---
+function createTimeChart(canvasId, label, labels, values, color, chartStore) {
+    const store = chartStore || metricsCharts;
+    if (store[canvasId]) { store[canvasId].destroy(); delete store[canvasId]; }
+
+    const ctx = document.getElementById(canvasId);
+    if (!ctx) return;
+
+    const shortLabels = labels.map(l => formatDateShort(l));
+
+    store[canvasId] = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: shortLabels,
+            datasets: [{
+                label: label,
+                data: values,
+                borderColor: color,
+                backgroundColor: color + '22',
+                fill: true,
+                tension: 0.3,
+                pointRadius: values.length > 50 ? 0 : 2,
+                borderWidth: 2,
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+                legend: { labels: { color: '#8b8fa3', font: { size: 11 } } },
+            },
+            scales: {
+                x: {
+                    ticks: { color: '#8b8fa3', font: { size: 10 }, maxTicksLimit: 8 },
+                    grid: { color: '#2e334822' },
+                },
+                y: {
+                    ticks: { color: '#8b8fa3', font: { size: 10 } },
+                    grid: { color: '#2e334844' },
+                    beginAtZero: true,
+                }
+            }
+        }
+    });
+}
+
+async function loadMetricsChart() {
+    if (!currentHostId) return;
+    const range = document.getElementById('metrics-range').value;
+    const data = await apiGet(`/hosts/${currentHostId}/metrics?range=${range}`);
+    if (!data || !data.series) return;
+
+    const noMetrics = document.getElementById('no-metrics-chart');
+    if (data.total_points === 0) {
+        noMetrics.style.display = 'block';
+        return;
+    }
+    noMetrics.style.display = 'none';
+
+    const s = data.series;
+    if (s.cpu) createTimeChart('chart-cpu', 'CPU %', s.cpu.labels, s.cpu.values, '#3b82f6', metricsCharts);
+    if (s.memory) createTimeChart('chart-memory', 'Mem\u00f3ria %', s.memory.labels, s.memory.values, '#8b5cf6', metricsCharts);
+    if (s.disk) createTimeChart('chart-disk', 'Disco %', s.disk.labels, s.disk.values, '#f59e0b', metricsCharts);
+    if (s.network) createTimeChart('chart-network', 'Rede', s.network.labels, s.network.values, '#10b981', metricsCharts);
+}
+
+// --- SNMP Devices Dashboard ---
+async function loadSNMPDevices() {
+    const devices = await apiGet('/snmp/devices');
+    const tbody = document.getElementById('snmp-devices-body');
+    const noDevices = document.getElementById('no-snmp-devices');
+    const statsGrid = document.getElementById('snmp-stats-grid');
+
+    // Show list view, hide detail
+    document.getElementById('snmp-list-view').style.display = 'block';
+    document.getElementById('snmp-detail-view').style.display = 'none';
+
+    if (!devices || devices.length === 0) {
+        tbody.innerHTML = '';
+        noDevices.style.display = 'block';
+        statsGrid.innerHTML = `
+            <div class="stat-card"><div class="stat-label">Dispositivos SNMP</div><div class="stat-value cyan">0</div></div>
+        `;
+        return;
+    }
+    noDevices.style.display = 'none';
+
+    const upCount = devices.filter(d => d.status === 'up').length;
+    statsGrid.innerHTML = `
+        <div class="stat-card"><div class="stat-label">Total Dispositivos</div><div class="stat-value cyan">${devices.length}</div></div>
+        <div class="stat-card"><div class="stat-label">Online</div><div class="stat-value green">${upCount}</div></div>
+        <div class="stat-card"><div class="stat-label">Offline</div><div class="stat-value red">${devices.length - upCount}</div></div>
+    `;
+
+    tbody.innerHTML = devices.map(d => `
+        <tr style="cursor:pointer" onclick="viewSNMPDevice(${d.id})">
+            <td><strong>${d.ip_address}</strong></td>
+            <td>${d.hostname || '-'}</td>
+            <td>${d.host_type || 'unknown'}</td>
+            <td>${statusBadge(d.status)}</td>
+            <td>${d.vendor || '-'}</td>
+            <td>${d.os_detected || '-'}</td>
+            <td>${d.snmp_community || 'public'}</td>
+            <td>${formatDate(d.last_seen)}</td>
+        </tr>
+    `).join('');
+}
+
+async function viewSNMPDevice(hostId) {
+    currentSNMPDeviceId = hostId;
+
+    // Switch to detail view
+    document.getElementById('snmp-list-view').style.display = 'none';
+    document.getElementById('snmp-detail-view').style.display = 'block';
+
+    const data = await apiGet('/snmp/device/' + hostId);
+    if (!data) return;
+
+    // Stats
+    const cpuLoads = (data.snmp_metrics.cpu || []).map(c => c.load_percent);
+    const avgCpu = cpuLoads.length > 0 ? Math.round(cpuLoads.reduce((a, b) => a + b, 0) / cpuLoads.length) : '-';
+
+    document.getElementById('snmp-detail-stats').innerHTML = `
+        <div class="stat-card"><div class="stat-label">IP</div><div class="stat-value" style="font-size:18px">${data.ip_address}</div></div>
+        <div class="stat-card"><div class="stat-label">Hostname</div><div class="stat-value" style="font-size:18px">${data.hostname || '-'}</div></div>
+        <div class="stat-card"><div class="stat-label">Status</div><div class="stat-value ${data.status === 'up' ? 'green' : 'red'}">${data.status}</div></div>
+        <div class="stat-card"><div class="stat-label">CPU M\u00e9dia</div><div class="stat-value cyan">${avgCpu}%</div></div>
+        <div class="stat-card"><div class="stat-label">Interfaces</div><div class="stat-value purple">${(data.snmp_metrics.interfaces || []).length}</div></div>
+        <div class="stat-card"><div class="stat-label">Storage</div><div class="stat-value yellow">${(data.snmp_metrics.storage || []).length}</div></div>
+    `;
+
+    // System Info
+    const info = data.snmp_info || {};
+    document.getElementById('snmp-system-info').innerHTML = `
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border-color);font-size:13px">
+                <span style="color:var(--text-secondary)">Descri\u00e7\u00e3o</span>
+                <span>${info.sys_description || '-'}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border-color);font-size:13px">
+                <span style="color:var(--text-secondary)">Nome</span>
+                <span>${info.sys_name || '-'}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border-color);font-size:13px">
+                <span style="color:var(--text-secondary)">Localiza\u00e7\u00e3o</span>
+                <span>${info.sys_location || '-'}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border-color);font-size:13px">
+                <span style="color:var(--text-secondary)">Uptime</span>
+                <span>${info.uptime_ticks || '-'}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border-color);font-size:13px">
+                <span style="color:var(--text-secondary)">SO</span>
+                <span>${data.os_detected || '-'}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border-color);font-size:13px">
+                <span style="color:var(--text-secondary)">Fabricante</span>
+                <span>${data.vendor || '-'}</span>
+            </div>
+        </div>
+    `;
+
+    // Interfaces
+    const ifBody = document.getElementById('snmp-interfaces-body');
+    const ifaces = data.snmp_metrics.interfaces || [];
+    if (ifaces.length > 0) {
+        ifBody.innerHTML = ifaces.map(i => `
+            <tr>
+                <td>${i.name || '-'}</td>
+                <td>${i.status ? statusBadge(i.status) : '-'}</td>
+                <td>${i.in_octets !== undefined ? formatBytes(i.in_octets) : '-'}</td>
+                <td>${i.out_octets !== undefined ? formatBytes(i.out_octets) : '-'}</td>
+            </tr>
+        `).join('');
+    } else {
+        ifBody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text-secondary)">Sem dados de interfaces</td></tr>';
+    }
+
+    // Storage
+    const stBody = document.getElementById('snmp-storage-body');
+    const storages = data.snmp_metrics.storage || [];
+    if (storages.length > 0) {
+        stBody.innerHTML = storages.map(s => `
+            <tr>
+                <td>${s.name || '-'}</td>
+                <td>${s.size !== undefined ? s.size : '-'}</td>
+                <td>${s.used !== undefined ? s.used : '-'}</td>
+                <td>${s.usage_percent !== undefined ? s.usage_percent + '%' : '-'}</td>
+            </tr>
+        `).join('');
+    } else {
+        stBody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text-secondary)">Sem dados de armazenamento</td></tr>';
+    }
+
+    // Ports
+    const ptBody = document.getElementById('snmp-ports-body');
+    const ports = data.ports || [];
+    if (ports.length > 0) {
+        ptBody.innerHTML = ports.map(p => `
+            <tr>
+                <td>${p.port}</td>
+                <td>${p.protocol}</td>
+                <td>${statusBadge(p.state)}</td>
+                <td>${p.service || '-'}</td>
+                <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis">${p.banner || '-'}</td>
+            </tr>
+        `).join('');
+    } else {
+        ptBody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-secondary)">Nenhuma porta</td></tr>';
+    }
+
+    // Alerts
+    const alBody = document.getElementById('snmp-alerts-body');
+    const alerts = data.alerts || [];
+    if (alerts.length > 0) {
+        alBody.innerHTML = alerts.map(a => `
+            <tr>
+                <td>${severityBadge(a.severity)}</td>
+                <td>${a.title}</td>
+                <td>${statusBadge(a.status)}</td>
+                <td>${formatDate(a.created_at)}</td>
+            </tr>
+        `).join('');
+    } else {
+        alBody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text-secondary)">Nenhum alerta</td></tr>';
+    }
+
+    // Load charts
+    loadSNMPMetricsChart();
+}
+
+async function loadSNMPMetricsChart() {
+    if (!currentSNMPDeviceId) return;
+    const range = document.getElementById('snmp-metrics-range').value;
+    const data = await apiGet(`/hosts/${currentSNMPDeviceId}/metrics?range=${range}`);
+    if (!data || !data.series) return;
+
+    const s = data.series;
+    if (s.cpu) createTimeChart('snmp-chart-cpu', 'CPU %', s.cpu.labels, s.cpu.values, '#3b82f6', snmpCharts);
+    if (s.disk) createTimeChart('snmp-chart-disk', 'Disco %', s.disk.labels, s.disk.values, '#f59e0b', snmpCharts);
+}
+
+function showSNMPList() {
+    currentSNMPDeviceId = null;
+    document.getElementById('snmp-list-view').style.display = 'block';
+    document.getElementById('snmp-detail-view').style.display = 'none';
 }
 
 // --- Scanner ---
@@ -369,7 +706,6 @@ async function startPentest() {
 
     if (result) {
         pollScanStatus(result.job_id);
-        // Show results panel
         document.getElementById('pentest-results-panel').style.display = 'block';
         document.getElementById('pentest-results').textContent = 'Executando pentest... Aguarde.';
 
@@ -444,7 +780,6 @@ async function searchLogs() {
 
     if (results && results.length > 0) {
         container.innerHTML = results.map(r => {
-            const cls = r.log_type === 'unknown' ? '' : r.log_type;
             return `<div class="log-line">${(r.raw || r.message || '').substring(0, 200)}</div>`;
         }).join('');
     } else {
@@ -489,7 +824,6 @@ async function loadTopology() {
     const canvas = document.getElementById('topology-canvas');
     const ctx = canvas.getContext('2d');
 
-    // Set canvas resolution
     const rect = canvas.getBoundingClientRect();
     canvas.width = rect.width * 2;
     canvas.height = rect.height * 2;
@@ -498,11 +832,9 @@ async function loadTopology() {
     const width = rect.width;
     const height = rect.height;
 
-    // Clear
     ctx.fillStyle = '#0f1117';
     ctx.fillRect(0, 0, width, height);
 
-    // Draw grid
     ctx.strokeStyle = 'rgba(46, 51, 72, 0.3)';
     ctx.lineWidth = 0.5;
     for (let x = 0; x < width; x += 40) {
@@ -523,7 +855,6 @@ async function loadTopology() {
         return;
     }
 
-    // Auto-layout: arrange nodes in a circle or use saved positions
     const centerX = width / 2;
     const centerY = height / 2;
     const radius = Math.min(width, height) * 0.35;
@@ -536,11 +867,9 @@ async function loadTopology() {
         }
     });
 
-    // Create node map for quick lookup
     const nodeMap = {};
     nodes.forEach(n => nodeMap[n.id] = n);
 
-    // Draw edges
     edges.forEach(edge => {
         const src = nodeMap[edge.source];
         const tgt = nodeMap[edge.target];
@@ -553,7 +882,6 @@ async function loadTopology() {
         ctx.lineWidth = 2;
         ctx.stroke();
 
-        // Edge type label
         const midX = (src.x + tgt.x) / 2;
         const midY = (src.y + tgt.y) / 2;
         ctx.fillStyle = '#8b8fa3';
@@ -562,27 +890,14 @@ async function loadTopology() {
         ctx.fillText(edge.type, midX, midY - 4);
     });
 
-    // Draw nodes
     const typeColors = {
-        'server': '#3b82f6',
-        'workstation': '#10b981',
-        'router': '#8b5cf6',
-        'switch': '#8b5cf6',
-        'network_device': '#8b5cf6',
-        'printer': '#f59e0b',
-        'firewall': '#ef4444',
-        'unknown': '#6b7280',
+        'server': '#3b82f6', 'workstation': '#10b981', 'router': '#8b5cf6',
+        'switch': '#8b5cf6', 'network_device': '#8b5cf6', 'printer': '#f59e0b',
+        'firewall': '#ef4444', 'unknown': '#6b7280',
     };
-
     const typeIcons = {
-        'server': 'SRV',
-        'workstation': 'WKS',
-        'router': 'RTR',
-        'switch': 'SW',
-        'network_device': 'NET',
-        'printer': 'PRT',
-        'firewall': 'FW',
-        'unknown': '?',
+        'server': 'SRV', 'workstation': 'WKS', 'router': 'RTR', 'switch': 'SW',
+        'network_device': 'NET', 'printer': 'PRT', 'firewall': 'FW', 'unknown': '?',
     };
 
     nodes.forEach(node => {
@@ -592,7 +907,6 @@ async function loadTopology() {
         const isDown = node.status === 'down';
         const nodeRadius = 28;
 
-        // Glow for alerts
         if (hasAlerts) {
             ctx.beginPath();
             ctx.arc(node.x, node.y, nodeRadius + 8, 0, Math.PI * 2);
@@ -600,7 +914,6 @@ async function loadTopology() {
             ctx.fill();
         }
 
-        // Node circle
         ctx.beginPath();
         ctx.arc(node.x, node.y, nodeRadius, 0, Math.PI * 2);
         ctx.fillStyle = isDown ? 'rgba(239, 68, 68, 0.3)' : `${color}33`;
@@ -609,20 +922,17 @@ async function loadTopology() {
         ctx.lineWidth = 2;
         ctx.stroke();
 
-        // Type icon
         ctx.fillStyle = isDown ? '#ef4444' : color;
         ctx.font = 'bold 11px Segoe UI';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(icon, node.x, node.y - 4);
 
-        // Status indicator
         ctx.beginPath();
         ctx.arc(node.x + 18, node.y - 18, 5, 0, Math.PI * 2);
         ctx.fillStyle = node.status === 'up' ? '#10b981' : (node.status === 'down' ? '#ef4444' : '#6b7280');
         ctx.fill();
 
-        // Labels
         ctx.fillStyle = '#e4e6f0';
         ctx.font = '11px Segoe UI';
         ctx.textBaseline = 'top';
@@ -632,14 +942,12 @@ async function loadTopology() {
         ctx.font = '9px Segoe UI';
         ctx.fillText(node.ip, node.x, node.y + nodeRadius + 18);
 
-        // Port count
         if (node.open_ports > 0) {
             ctx.fillStyle = '#06b6d4';
             ctx.font = '8px Segoe UI';
             ctx.fillText(node.open_ports + ' ports', node.x, node.y + 6);
         }
 
-        // SNMP/Agent indicators
         let indicators = [];
         if (node.snmp) indicators.push('SNMP');
         if (node.agent) indicators.push('AGT');
@@ -650,7 +958,6 @@ async function loadTopology() {
         }
     });
 
-    // Title
     ctx.fillStyle = '#e4e6f0';
     ctx.font = 'bold 14px Segoe UI';
     ctx.textAlign = 'left';
@@ -658,7 +965,7 @@ async function loadTopology() {
     ctx.fillText('Topologia de Rede - ' + nodes.length + ' hosts', 20, 16);
 }
 
-// --- Modal ---
+// --- Modal (kept for backward compat) ---
 function showModal(title, content) {
     let overlay = document.getElementById('modal-overlay');
     if (!overlay) {
@@ -699,7 +1006,7 @@ function startAutoRefresh() {
             const pageId = activePage.id.replace('page-', '');
             if (pageId === 'dashboard') refreshDashboard();
         }
-    }, 30000); // Refresh every 30 seconds
+    }, 30000);
 }
 
 // --- Initialize ---

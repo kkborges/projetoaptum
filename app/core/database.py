@@ -42,6 +42,10 @@ class Host(Base):
     # Topology position
     topology_x = Column(Float, nullable=True)
     topology_y = Column(Float, nullable=True)
+    # Log forwarding configuration
+    log_paths = Column(JSON, nullable=True)  # list of log file paths to forward
+    # Per-host SNMP community override
+    snmp_community = Column(String(100), default="public")
 
     ports = relationship("Port", back_populates="host", cascade="all, delete-orphan")
     metrics = relationship("HostMetric", back_populates="host", cascade="all, delete-orphan")

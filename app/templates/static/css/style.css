@@ -267,6 +267,8 @@ body {
 .btn-primary:hover { background: #2563eb; }
 .btn-success { background: var(--accent-green); }
 .btn-danger { background: var(--accent-red); }
+.btn-secondary { background: var(--bg-hover); color: var(--text-secondary); border: 1px solid var(--border-color); }
+.btn-secondary:hover { background: var(--bg-card); color: var(--text-primary); }
 .btn-sm { padding: 5px 12px; font-size: 12px; }
 
 .btn-icon { margin-right: 6px; }
