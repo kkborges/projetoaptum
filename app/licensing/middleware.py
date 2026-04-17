@@ -2,11 +2,14 @@
 
 Routes are mapped to modules. Unlicensed modules return 403.
 Setup mode allows only licensing endpoints and health check.
+
+Uses pure ASGI middleware to avoid BaseHTTPMiddleware issues
+(write() before start_response / streaming response bugs).
 """
+import json
 import logging
-from fastapi import Request, Response
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import JSONResponse
+
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.core.database import SessionLocal
 from app.licensing.manager import license_manager
@@ -41,31 +44,41 @@ ALWAYS_ALLOWED = [
 ]
 
 
-class LicenseMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next) -> Response:
-        path = request.url.path
+class LicenseMiddleware:
+    """Pure ASGI middleware for license enforcement."""
+
+    def __init__(self, app: ASGIApp):
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        path = scope.get("path", "")
 
         # Always allow certain paths
         for prefix in ALWAYS_ALLOWED:
             if path.startswith(prefix):
-                return await call_next(request)
+                await self.app(scope, receive, send)
+                return
 
         # Allow root page
         if path == "/":
-            return await call_next(request)
+            await self.app(scope, receive, send)
+            return
 
-        # In setup mode, redirect non-API to licensing page
+        # In setup mode, block non-licensing API calls
         if license_manager.is_setup_mode:
             if path.startswith("/api/") and not path.startswith("/api/licensing"):
-                return JSONResponse(
-                    status_code=403,
-                    content={
-                        "detail": "Sistema em modo setup. Ative uma licenca em /licensing",
-                        "setup_mode": True,
-                        "licensing_url": "/licensing",
-                    },
-                )
-            return await call_next(request)
+                await self._send_json(send, 403, {
+                    "detail": "Sistema em modo setup. Ative uma licenca em /licensing",
+                    "setup_mode": True,
+                    "licensing_url": "/licensing",
+                })
+                return
+            await self.app(scope, receive, send)
+            return
 
         # Check module access for API routes
         module_name = None
@@ -75,19 +88,36 @@ class LicenseMiddleware(BaseHTTPMiddleware):
                 break
 
         if module_name:
-            db = SessionLocal()
             try:
-                result = license_manager.check_module_access(db, module_name)
-                if not result["allowed"]:
-                    return JSONResponse(
-                        status_code=403,
-                        content={
+                db = SessionLocal()
+                try:
+                    result = license_manager.check_module_access(db, module_name)
+                    if not result["allowed"]:
+                        await self._send_json(send, 403, {
                             "detail": result["reason"],
                             "module": module_name,
                             "licensed": False,
-                        },
-                    )
-            finally:
-                db.close()
+                        })
+                        return
+                finally:
+                    db.close()
+            except Exception as e:
+                logger.error(f"License check error for {module_name}: {e}")
 
-        return await call_next(request)
+        await self.app(scope, receive, send)
+
+    async def _send_json(self, send: Send, status: int, body: dict):
+        """Send a JSON response directly via ASGI."""
+        payload = json.dumps(body).encode("utf-8")
+        await send({
+            "type": "http.response.start",
+            "status": status,
+            "headers": [
+                [b"content-type", b"application/json"],
+                [b"content-length", str(len(payload)).encode()],
+            ],
+        })
+        await send({
+            "type": "http.response.body",
+            "body": payload,
+        })
